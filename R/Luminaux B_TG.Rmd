@@ -1,0 +1,3528 @@
+---
+title: "Luminaux B"
+author: "T Gaillard, E LAAS"
+date: "01/06/2021"
+output: 
+  
+  html_document:
+    number_sections: yes
+    theme: cerulean
+    toc: true
+    toc_float:
+      collapsed: no
+      smooth_scroll: no
+  pdf_document:
+    toc: yes
+  word_document:
+    
+    toc: yes
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = FALSE,
+	message = FALSE,
+	warning = FALSE, cache = FALSE,fig.path='Figures articles lum b aout/', dev = 'pdf'
+)
+```
+
+
+
+# Introduction
+
+```{r Initiation, warning=FALSE}
+library(rms)
+library(RColorBrewer)
+library(scales)
+library(boot)
+library(MatchIt) 
+library(optmatch) 
+library (Matching)
+library(knitr)
+library (survminer)
+library(ggsci)
+library(ggpubr)
+library(cowplot)
+library(stddiff)
+library(cobalt)
+library(lubridate)
+source ("mes_fonctions.r")
+source("plot interaction.R")
+#source("mes_fonctions2.R")
+library(tidyverse)
+library(finalfit)
+library(forestplot)
+library(gtsummary)
+
+```
+
+
+
+# Methods
+
+## Patients selection
+
+### Selection criteria
+
+
+Inclusion criteria were 
+
+- T2-3N0-3M0 invasive luminal B-like __HR positive HER2-negative__, breast tumor. 
+- __Grade 3__ to reflect the most proliferative tumors
+- Unilateral, non-recurrent, no inflammatory, non-metastatic 
+
+Luminal-B like breast tumor are usually defined on proliferation (Ki67>20%) and/or the PR status (<20%). As this information is often missing in the oldest cohorts, we decided to select only grade 3 tumors to represent the most proliferative tumors. 
+
+Because NAC is uncommon for tumor < 20 mm, only T2-T3 tumor were included. 
+
+The clinical size and the clinical/ ultrasonographic nodal status +/- assessed by fine needle biopsy were used for the analysis, as they play a crucial role in decisions concerning tumor management. 
+
+### Cohorts description
+
+
+__Cohort 1__ was constituted by all the patients with a T2-3N0-3M0 invasive luminal B-like (grade 3), HER2-negative, breast tumor treated at Curie Institute, Paris, France, between January 1st, 2002 and December 31st, 2011 (n =666). Patients who had undergone NAC (n=177) (NEOREP cohort, CNIL declaration number 1547270) constituted the NAC group. These patients were compared with 489 patients with a T2-3N0-3M0 invasive luminal B-like treated with AC in the same period, identified from the Institut Curie retrospective breast cancer database.  
+
+__Cohort 2__ was constituted by the patients between 18 and 43 years old with a T2-3N0-3M0 invasive luminal B-like (grade 3), HER2-negative, breast tumor treated at Curie Institute, Paris, France, between January 1st, 2012 and December 31st, 2018 (n = 161) : n = 55 in the AC group and n = 106 in the NAC group.
+
+__Cohort 3__ was constituted by all the patient with a T2-3N0-3M0 invasive luminal B-like (grade 3), HER2-negative, breast tumor, enrolled in large prospective french study : the Canto study (n = 380). CANTO is coordinated by UNICANCER, the National Cooperative Group of French Cancer Centers. The study was approved by the national regulatory authorities and ethics committee (ID-RCB: 2011-A01095-36, 11-039). All patients enrolled in the study provided written informed consent, including consent for the biological data collection.
+We then considered only the premenopausal patient
+
+
+```{r cohort 1}
+load("d_imp4.RData") 
+
+d_impFR <- subset(d_imp, d_imp$taille_cl == ">20")
+d_impFR$BRCA_status <- NULL
+
+d_impFR <- subset(d_impFR, d_impFR$chirax!="No")
+d_impFR$chirax <- droplevels((d_impFR$chirax))
+d_impFR$Grade_mod <- as.factor(ifelse (d_impFR$Grade == "1" | d_impFR$Grade=="2", "1-2","3"))
+
+#on selectionne seulement les G3
+d_impFR <- subset(d_impFR, d_impFR$Grade_mod == "3")  
+#je supprime des patientes triples neg qui etaient passé à l'as
+d_impFR <- subset(d_impFR, d_impFR$ROPCT>0 | d_impFR$RPPCT>0)#
+d_impFR <- subset(d_impFR, d_impFR$anneediag<2012)
+
+
+
+#creation de la variable de Tils en classe de 10
+d_impFR$TILS_pre_2cl <- cut(d_impFR$TILS_pre, c(0,10,90), c("≤10", ">10"))
+#creation de la variable de RP
+d_impFR$RP_cl <- cut(d_impFR$RPPCT, c(0,20,101),include.lowest = TRUE, c("≤20", ">20"))
+
+
+## Taille en classe
+d_impFR$taille_cl <- as.factor(ifelse(d_impFR$taille_tum <= 50, "T2",
+                                      ifelse(d_impFR$taille_tum > 50, "T3-T4", NA)))
+d_imp$FR$taille_cl <- as.factor(d_impFR$taille_cl)
+
+
+d_impFR$base_label <-NA
+d_impFR$base_label[d_impFR$base=="Adj"] <- "AC"
+d_impFR$base_label[d_impFR$base=="CNA"] <- "NAC"
+d_impFR$base_label <- as.factor(d_impFR$base_label)
+
+d_impFR$age_cl <- as.factor(ifelse(d_impFR$age < 40, 0,
+                             ifelse(d_impFR$age >= 40 & d_impFR$age < 50, 1,
+                              ifelse(d_impFR$age >= 50, 2, NA))))
+levels(d_impFR$age_cl) = c("0-39.9", "40-49.9", "50+")
+d_impFR$BMI_cl <- as.factor(ifelse(d_impFR$BMI >= 18.5 & d_impFR$BMI < 25, "18.5-24.9",
+                              ifelse(d_impFR$BMI < 18.5, "<18.5",
+                              ifelse(d_impFR$BMI >= 25 & d_impFR$BMI < 30, "25-29.9",
+                               ifelse(d_impFR$BMI >= 30, ">=30", NA)))))
+d_impFR$BMI_cl = factor(d_impFR$BMI_cl, levels = c("18.5-24.9","<18.5","25-29.9",">=30"))
+levels(d_impFR$Node_preop) <- c("N0", "N1-2-3")
+
+```
+
+```{r cohort2}
+load("07_oncofertilite_consore_preprocessed_labels.RData")#n = 1357
+oncofert <- database_preprocessed_labels
+# load("/Users/enoralaas/Downloads/03_p53_eortc_preprocessed_labels.RData")#n = 1856
+# basep53 <- database_preprocessed_labels
+# load("/Users/enoralaas/Downloads/04_canto_preprocessed_labels.RData")#9510
+# canto  <- database_preprocessed_labels
+load("ki67_enora.RData")
+ki <- ki67_enora
+
+test <- read_csv2("oncofertilite_tumorec_vs_mastec_09042021.csv")
+
+load("30_julie_subtype_preprocessed_labels.RData")
+oncofert_compl <- database_preprocessed_labels
+
+base <- left_join(oncofert,oncofert_compl, by = "numdos_curie")
+base <- left_join(base,ki , by = "numdos_curie")
+base <- left_join(base,test , by = "numdos_curie")
+base <- subset(base, base$luminal.y == "Luminal")
+
+
+d <- base[c("dat_first_surg", "dat_os", 
+"database", "numdos_curie", "cletri", "base_cletri", "dat_birth", 
+"year_birth", "dat_bc_diagnosis", "year_diag", "period_diag", 
+"center_curie",   "age", "age_cl_10_1", 
+"age_cl_10_2", "age_cl_3_cl", "age_cl_5_cl", "age_young_cl", 
+"age_young_cl_30_bin", "age_young_cl_40_bin", "age_young_cl_45_bin", 
+"age_young_cl_50_bin", "nb_child", "nb_child_3cl", "prev_child", 
+"brca_screen", "brca_mut", "brca_1_2_mut", "weight", "size", 
+"bmi", "bmi_2cl", "bmi_3cl", "bmi_4cl", "bmi_5cl", "smoking", 
+"bilat_bc", "inflammatory_bc", "tclin", "ctuicc_3cl", "ctuicc_2cl", 
+"cnuicc_4cl", "cnuicc_2cl", "muicc", "dat_first_biopsy", 
+"histo_3cl", "histo_2cl", "grade_3cl", "grade_2cl", "ct", "dat_first_ct", 
+"neo_ct", "adj_ct", "ct_setting_5cl.x", "nbggpos", "pnuicc_4cl", 
+"histo_size", "pcr", "nbggpos_postneo", "ypnuicc_4cl", "ypnuicc_3cl", 
+"ypnuicc_2cl", "dat_last_update", "ev_recloc", "ev_recloc_txt", 
+"dat_recloc", "ev_recreg", "ev_recreg_txt", "dat_recreg", "ev_meta", 
+"ev_meta_txt", "dat_meta", "ev_contro", "ev_contro_txt", "dat_contro", 
+"ev_secondk", "ev_secondk_txt", "dat_secondk", "status_vital", 
+"status_vital_txt", "cause_death", "dat_last_news", "dat_last_news_censor", 
+"year_last_news", "status_rfs_diag", "status_rfs_diag_txt", "status_drfs_diag", 
+"status_drfs_diag_txt", "status_dss_diag", "status_dss_diag_txt", 
+"delay_rfs_diag", "delay_drfs_diag", "delay_dss_diag", "delay_os_diag", 
+"status_dfs", "status_dfs_txt", "dat_rfs", "dat_drfs", "dat_dfs", 
+"dat_dss","er_status", "pr_status", "hr_status","conclusion_KI_tum_non_traitee" ,"tumorectomy_or_mastectomy" )]
+
+
+d$ki <- as.numeric(d$conclusion_KI_tum_non_traitee)
+d$surgery_x<-as.factor(d$tumorectomy_or_mastectomy)
+
+
+#dd <- subset(d, d$ctuicc_3cl != "T0-T1")
+dd <- subset(d, d$tclin > 20)
+dd <- subset(dd, dd$grade_2cl == "Grade III")
+
+dd$ctuicc_3cl <- droplevels(dd$ctuicc_3cl)
+# age médian : 37 ans
+dd$age_young_cl_35_bin <- as.factor(ifelse(dd$age < 35, 0, 1))
+levels(dd$age_young_cl_35_bin) <- c("[0-35)", "35+")
+dd$chimio <- as.factor(ifelse (dd$neo_ct == "Yes", "NAC", "AC"))
+dd$age_cl_10_1 <- droplevels(dd$age_cl_10_1)
+
+dd$surgery <- as.factor(ifelse(dd$surgery_x == "tumorectomy", "Lumpectomy",
+                        ifelse(dd$surgery_x == "mastectomy", "Mastectomy", NA)))
+
+dd$date_anne <- year(dd$dat_first_surg)
+
+#j'enleve les patientes en commun
+dd <-tibble(dd) %>% filter(!(dd$numdos_curie %in% d_impFR$numdos))
+dd$chimio <- as.factor(ifelse (dd$neo_ct == "Yes", "NAC", "AC"))
+dd$age_cl_10_1 <- droplevels(dd$age_cl_10_1)
+
+
+levels(dd$ctuicc_2cl) <- c("T2", "T3-4")
+dd$age_young_cl_40_bin <- factor(dd$age_young_cl_40_bin, labels = c("0-39.9", "40+"))
+
+```
+
+## Statistical analysis
+
+
+For both cohorts, the characteristics of the patients in the two groups at baseline were compared in univariable analysis. A multivariable logistic regression model was then used to generate the PS. The covariates included in the model were patient clinical characteristics (age, menopausal status, body mass index, initial clinical tumor size), histological characteristics at diagnosis (mitotic index) and initial clinical nodal status. 
+
+We created balanced cohorts, using _the inverse probability of treatment weights (IPTW)_, defined as the inverse of the propensity score for patients in the NAC population and 1/(1–propensity score) for patients in the AC population. IPTW adjustment method is a valuable method to obtain unbiased estimates of average treatment effects and has already been used in breast cancer studies.
+
+Weight outliers lying above the 99th percentile were truncated to prevent sparse data. Missing data were handled by multiple imputation with chained equations. The benefit of NAC was estimated in the initial and IPTW-corrected populations, from Kaplan-Meier curves. Survival was compared between groups by performing log-rank tests on the initial population and a weighted univariable Cox model in the IPTW-corrected population. 
+
+An IPTW-corrected multivariable Cox model analysis was then performed, to take into account potential confounding factors not included in the PS (mostly surgical management). We tested the hypothesis of potentially different effects of NAC in different subgroups, by including pairwise interaction terms in the Cox model. Due to the lack of statistical power for analyzing interactions, a p-value of 0.10 or lower was considered statistically significant. 
+
+# Results
+
+## Cohort 1 : Hypothsesis (discovery analysis)
+
+### Population description
+
+
+
+```{r population description}
+
+var <- c("age", "age_cl", "menop.f", "BMI", "BMI_cl", "taille_tum", "taille_cl","Node_preop",  "surgery", "base")
+
+label_var <-c(age ~ "Age", age_cl~ "Age", menop.f ~ "Menopausal status", BMI~"BMI", BMI_cl ~ "BMI", taille_tum ~ "Initial clinical tumor size", taille_cl ~ "Initial clinical tumor size", Node_preop ~ "Nodal status", surgery ~ "Surgery")
+              
+library(gtsummary)
+
+d_impFR %>% select(all_of(var)) %>% 
+  tbl_summary(by = base,  label = label_var, missing_text = "(Missing)") %>%
+  bold_labels() %>% 
+  modify_header(label ~ "**Variable**") %>%
+  #modify_spanning_header(c("stat_1", "stat_2", "stat_3") ~ "**Molecular subtypes**") %>% 
+  add_overall() %>% 
+  add_p()
+
+```
+
+
+
+### Analysis before PS
+
+```{r création population SP cohort1}
+
+#multi <- glm (base~age+BMI+rcs(taille_tum,5)+menop.f+Node_preop , data=d_impFR, family=binomial)
+#stepAIC(multi,direction = "backward")
+
+multi_def <- glm( base ~ age +  rcs(taille_tum,5) + Node_preop , family = binomial, data = d_impFR)
+
+set.seed(1703)
+PRED <- multi_def$fitted.values
+d_impFR$PRED <- PRED
+
+```
+
+
+```{r variables utiles et figure de SP cohort1}
+
+d_impFR$base_mod <-NA
+d_impFR$base_mod[d_impFR$base=="Adj"] <- 0
+d_impFR$base_mod[d_impFR$base=="CNA"] <- 1
+
+d_impFR$w <- d_impFR$base_mod/d_impFR$PRED + (1 - d_impFR$base_mod)/(1 - d_impFR$PRED)
+d_impFR$wt = pmin(d_impFR$w, quantile(d_impFR$w, 0.99))
+
+d_impFR$base_mod <- factor(d_impFR$base, labels  =c( "ACT","NAC"))
+
+
+d_impFR$age_rev <- cut(d_impFR$age, c(0, 40,50,100), include.lowest=TRUE, labels = c("<40","40-50", "≥50"))
+
+```
+
+
+Pre PS analysis are available [here](Lum-B-before-PS-cohort-1.html)
+
+### Analysis after PS
+
+#### Kaplan Meier curves
+
+
+As it is a weighted population, risk table are not displayed. 
+
+P-value is obtained with a weighted Cox model.
+
+```{r FigA4 KM DFS pondéré cohort1, fig.width=6,fig.height=4,autodep=FALSE}
+
+source("univarieSP.R")
+fit_dfs               <- survfit(Surv( d_impFR$tps_ssr, d_impFR$ssr_num)	~ base,  data = d_impFR, weights = wt)
+palette_jco  <- c(pal_jco("default")(10))
+
+
+p_dfs <- ggsurvplot(fit_dfs,data=d_impFR, 
+                               palette = palette_jco[1:2],
+                              pval = FALSE,
+                              # legend = c(0.6, 0.25), 
+                              xlim=c(0,100),
+                              legend.title = "CT strategy", 
+                              legend.labs = levels(d_impFR$base_label) ,
+                              legend = c(0.2, 0.25) ,
+                              
+                              risk.table = F , font.legend = 16 , size = 1, 
+                              censor=F, font.x = 16, font.y = 16,font.tickslab = 16)
+    
+                              p_dfs$plot <- p_dfs$plot + theme(plot.title = element_text(hjust = 0.5))+ ylab("Disease free survival")+xlab("Time (months)")
+                              p_dfs$plot <- p_dfs$plot + annotate("text", x=40, y=0.01, size = 5,
+                                              label ="HR = 0.86 [0.67–1.1]; p = 0.22")
+                              
+					
+p_dfs
+```
+
+
+```{r KM OS pondéré cohort1, fig.width=9,fig.height=12,autodep=FALSE}
+
+source("univarieSP.R")
+fit_os               <- survfit(Surv( d_impFR$tps_deces, d_impFR$deces)	~ base,  data = d_impFR, weights = wt)
+palette_jco  <- c(pal_jco("default")(10))
+
+
+p_os <- ggsurvplot(fit_os,data=d_impFR, 
+                               palette = palette_jco[1:2],
+                              pval = FALSE,
+                              # legend = c(0.6, 0.25), 
+                              xlim=c(0,100),
+                              legend.title = "CT strategy", 
+                              legend.labs = levels(d_impFR$base_label) ,
+                              legend = c(0.2, 0.25) ,
+                              
+                              risk.table = F , font.legend = 16 , size = 1, 
+                              censor=F, font.x = 16, font.y = 16,font.tickslab = 16)
+    
+                              p_os$plot <- p_os$plot + theme(plot.title = element_text(hjust = 0.5))+ ylab("Overall survival")+xlab("Time (months)")
+                              p_os$plot <- p_os$plot + annotate ("text", x=40, y=0.01, size = 5,
+                                                    label ="HR = 0.73 [0.5–1.05]; p = 0.09")
+                              
+					
+#p_os
+```
+
+``` {r KM DRFS pondéré cohort1, fig.width=9,fig.height=12,autodep=FALSE}
+
+fit_drfs               <- survfit(Surv( d_impFR$tps_drfs, d_impFR$DRFS_evt)	~ base ,  data = d_impFR,  weights = wt)
+
+palette_jco  <- c(pal_jco("default")(10))
+
+
+p_drfs<- ggsurvplot(fit_drfs,data=d_impFR, 
+                               palette = palette_jco[1:2],
+                              pval = F,
+                              # legend = c(0.6, 0.25), 
+                              xlim=c(0,100),
+                              legend.title = "CT strategy", 
+                              legend.labs = levels(d_impFR$base_label) ,
+                              legend = c(0.2, 0.25) ,
+                              
+                              risk.table = F , font.legend = 16 , size = 1, 
+                              censor=F, font.x = 16, font.y = 16,font.tickslab = 16)
+
+p_drfs$plot <- p_drfs$plot + theme(plot.title = element_text(hjust = 0.5))+ ylab("Distant recurrence free survival")+xlab("Time (months)")
+                              p_drfs$plot <- p_drfs$plot + annotate ("text", x=40, y=0.01, size = 5,
+                                                          label ="HR = 0.73 [0.56-0.94]; p = 0.016")
+                             
+                               
+                            
+					
+#p_drfs
+```
+
+
+```{r Fig1 Figure KM regroupée cohort 1,fig.width=10,fig.height=4,autodep=FALSE}
+library(cowplot)
+
+##attention les labels des figures sont utilisés dans les 2 figures d'interaction : à changer si je vuex m'en servir
+list_g <- list()
+#list_g[[1]] <- p_dfs
+list_g[[1]] <- p_drfs
+list_g[[2]] <- p_os
+
+figKM <- arrange_ggsurvplots(list_g, print = TRUE,   ncol = 2, nrow = 1)
+figKM 
+```
+
+
+
+The IPTW-adjusted RFS, was not significantly different in the NAC group compared to the AC group in univariable analysis __(HR = 0.86, 95%IC [0.67 – 1.1]; p = 0.22)__.
+
+The IPTW-adjusted DRFS was significantly better in the NAC group __(HR = 0.73, 95%IC [0.56-0.94]; p = 0.016)__ in univariable analysis.
+
+The IPTW-adjusted OS was not significantly different in the NAC group __(HR = 0.73, 95%IC [0.5 – 1.05]; p = 0.09)__ in univariable analysis.
+
+
+
+#### Cox multivariable
+
+We performed multivariable cox regression model with adjustment on the type of surgery performed.
+
+##### **DFS**
+
+
+The IPTW-adjusted RFS, was not significantly different in the NAC group compared to the AC group in multivariable analysis __(HR = 0.96, 95%IC [0.74 – 1.23]; p = 0.7)__. The performance of a radical mastectomy was associated with lower RFS.\  
+
+
+
+```{r cox uni RFS cohort1}
+survuni_rfs <- coxph (Surv(tps_ssr, ssr_num)	~ base_label + surgery,  data = d_impFR, method="breslow", weights = wt, robust = F)
+uni_rfs <- cox_summary(survuni_rfs)
+
+survuni_rfs %>% tbl_regression(label = list(base_label~"Chemotherapy", surgery~"Surgery"), exp = TRUE, add_estimate_to_reference_rows = TRUE) %>% bold_labels() 
+```
+
+
+
+\n
+\hfill\break
+\n\n\n
+  
+
+
+
+
+##### **DRFS**
+
+
+The IPTW-adjusted DRFS was no longer significantly better in the NAC group (HR = 0.85, 95%IC [0.65-1.12]; p = 0.2) after adjustement on the type of surgery performed. The performance of a radical mastectomy was associated with lower DRFS.\  
+
+
+
+```{r cox uni DRFS cohort1}
+survuni_drfs <- coxph (Surv(tps_drfs, DRFS_evt)	~ base_label + surgery,  data = d_impFR, method="breslow", weights = wt, robust = F)
+uni_drfs <- cox_summary(survuni_drfs)
+#kable(uni_drfs)
+
+
+survuni_drfs %>% 
+  tbl_regression(label = list(base_label~"Chemotherapy", surgery~"Surgery"), exp = TRUE, add_estimate_to_reference_rows = TRUE) %>% bold_labels() 
+```
+
+  
+\n
+
+
+
+##### **OS**
+
+
+The IPTW-adjusted OS was not significantly different in the NAC group (HR = 0.79, 95%IC [0.53 – 1.15]; p = 0.2) after adjustement on the type of surgery performed.The performance of a radical mastectomy was not associated with higher OS.  
+
+
+```{r cox uni OS cohort1}
+survuni_os <- coxph (Surv(tps_deces, deces)	~ base_label + surgery,  data = d_impFR, method="breslow", weights = wt, robust = F)
+uni_os <- cox_summary(survuni_os)
+survuni_os %>% tbl_regression(label = list(base_label~"Chemotherapy", surgery~"Surgery"), exp = TRUE, add_estimate_to_reference_rows = TRUE) %>% bold_labels()  
+
+```
+  
+\n
+
+
+
+#### Forest plot interaction
+
+##### **DFS**
+
+After univariable analysis, age and menopausal status were associated with a different impact of the chemotherapy strategy on DFS (Pinteraction < 0.01). 
+Other subgroup analysis are showed for information.    
+
+```{r FigA6A forest plot uni DFS cohort1,fig.width=10,fig.height=8}
+#source ("mes_fonctions.r")
+#d_impFR$Node_preop <- factor(d_impFR$Node_preop, labels = c("Negative", "Positive"))
+#source("double interaction.R")
+library(forestplot)
+
+forest_plot_cox <- function(y, var, pretty_y,delay, status, data, wt){
+  f <- as.formula(paste("Surv(",delay,",",status, ")", "~",y,":",var,"+", y))
+  mod <- coxph(f, weight = wt, robust=F,data = data)
+  uni <- cox_summary(mod)
+  
+  fp <- as.formula(paste("Surv(",delay,",",status, ")", "~",y,"*",var))
+  mod2 <- coxph(fp, weight = wt, robust = F,data = data)
+  pval <- car::Anova(mod2, test.statistic="Wald")$`Pr(>Chisq)`
+  
+  nmax <- length(levels(data[,y]))
+  #nmin <- length(levels(data[,var]))
+  nmin<- ifelse(length(levels(data[,var]))==0, 1,length(levels(data[,var])))
+  #nch <- (nmax*nmin)-nmax
+  nch <- ifelse(is.numeric(data[,var]),nmax,(nmax*nmin)-nmax )
+  
+  HR_plot  = round(tail(uni$exp.coef.,nch),2)
+  lower_plot = round(tail(uni$IC_inf.,nch),2)
+  upper_plot = round(tail(uni$IC_sup.,nch),2)
+  p_plot = round(tail(uni$P_value,nch),2)
+  
+  
+  HR_lab <- as.character(HR_plot)
+  lower_lab <- as.character(lower_plot)
+  upper_lab <- as.character(upper_plot)
+  p_lab <-  as.character(p_plot)
+  
+  inter_plot_quali<-
+    data.frame(
+      HR  = c(NA,NA,HR_plot),
+      lower = c( NA,NA,lower_plot),
+      upper = c(NA, NA,upper_plot), 
+      p = c( NA,NA,p_plot))
+  
+
+  nb <- ifelse (nmin ==1, 2, nmin)
+  N <- list()
+  for (i in 2:nb) {
+    N[[i]] <- c(levels(data[,var])[i], rep(NA, nmax-1))
+    
+  }
+  
+  nmin_mod <- ifelse(nmin == 1, 1, nmin-1)
+  deter <- ifelse(nmin == 1, 1, 2)
+  
+  pval_final <- tail(round(pval, 2),1)
+  pval_final2 <- ifelse(pval_final>0.01, pval_final, "p<0.01")
+  
+  label <- cbind(c(rep(NA, deter),unlist(N)),
+                 c(NA,pretty_y, rep(levels(data[,y]),nmin_mod)),
+                 c(NA,NA, HR_lab),
+                 c(NA,NA, paste("95%CI [",lower_lab,"-")),
+                 c(NA,NA,paste(upper_lab,"]")),
+                 c( NA,pval_final2,rep(NA, nch)))
+  
+  tibble(number = inter_plot_quali, label = label)
+  
+}
+
+  
+poss_inter_cox_fp = possibly(.f = forest_plot_cox, otherwise = NULL)
+
+# d_impFR$taille_cl <- factor(d_impFR$taille_cl, labels = c("T1", "T2-T3"))
+
+var_y <- c("age",  "age_cl", "BMI", "BMI_cl","menop.f",  "Size", "taille_cl", "Node_preop")
+
+pretty_var_y <- c("Age",  "Age","BMI", "BMI","Menopausal status",  "Size",  "cT","cN")
+
+tab_inter <- tibble(var_y, pretty_var_y) 
+
+try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+  poss_inter_cox_fp(
+  delay = "tps_ssr",
+  status = "ssr_num",
+  y = x,
+  var = "base_label",
+  pretty_y = y,
+  wt = wt,
+  data = d_impFR)))
+
+
+tablo_fp <- do.call(rbind,try$forest)
+
+tablo_fp$label [1,3]<-"HR"
+tablo_fp$label [1,4]<-"IC low"
+tablo_fp$label [1,5]<-"IC high"
+tablo_fp$label [1,6]<-"p-value"
+
+
+
+tablo_def_hr <-
+  tablo_fp %>% filter(is.na(number$HR) |
+                        number$HR < 10 &
+                        number$HR > 0 &
+                        number$upper < 40 &
+                        number$lower > 0) %>% 
+  group_by(label[, 1]) %>% 
+  rowid_to_column(.) %>% 
+  mutate(num_fig = ceiling(rowid/40))
+
+
+forestplot(
+    labeltext = tablo_def_hr$label[,2:6],
+    tablo_def_hr$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),
+    xlab = "<==== NAC better   |   AC better ====>",
+    xlog = TRUE,
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    line.margin = unit(2, "mm"),
+    lty.zero =  "dashed",
+    boxsize = 0.35,
+    graphwidth = unit(70, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="Cohort 1 - Forest Plot - Hazard Ratio DFS (Univariable analysis)",
+        #par(oma=c(10,1,1)),
+          hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=110,  lineend="butt", col="#99999922"),
+                           "15" = gpar(lwd=110, lineend="butt",  col="#99999922"),
+                          "22" = gpar(lwd=100, lineend="butt",  col="#99999922"))
+                          # "28" = gpar(lwd=90, lineend="butt",  col="#99999922"))
+  )
+```
+
+
+```{r Fig A6B FP DFS multi cohort1 ,fig.width=10,fig.height=8}
+forest_plot_cox_multi <- function(y, var, pretty_y,delay, status, multi, data){
+  f<-as.formula(paste("Surv(",delay,",",status, ")", "~",y,":",var,"+", y, "+", multi))
+  mod <- coxph(f, weight = wt, robust=F,data = data, method = "breslow")
+  uni <- cox_summary(mod)
+  
+  fp<-as.formula(paste("Surv(",delay,",",status, ")", "~",y,"*",var, "+", multi))
+  mod2 <- coxph(fp,weight = wt, robust=F, data = data, method = "breslow")
+  pval <- car::Anova(mod2, test.statistic="Wald")$`Pr(>Chisq)`
+  
+  nmin<- ifelse(length(levels(data[,var]))==0, 1,length(levels(data[,var])))
+  nmax <- length(levels(data[,y]))
+  #nmin <- length(levels(data[,var]))
+  #nch <- (nmax*nmin)-nmax
+  nch <- ifelse(is.numeric(data[,var]),nmax,(nmax*nmin)-nmax )
+  
+  HR_plot  = round(tail(uni$exp.coef.,nch),2)
+  lower_plot = round(tail(uni$IC_inf.,nch),2)
+  upper_plot = round(tail(uni$IC_sup.,nch),2)
+  p_plot = round(tail(uni$P_value,nch),2)
+  
+  HR_lab <- as.character(HR_plot)
+  lower_lab <- as.character(lower_plot)
+  upper_lab <- as.character(upper_plot)
+  p_lab <- as.character(p_plot)
+  
+  inter_plot_quali<-
+    data.frame(
+      HR  = c(NA,NA,HR_plot),
+      lower = c( NA,NA,lower_plot),
+      upper = c(NA, NA,upper_plot), 
+      p = c( NA,NA,p_plot))
+  
+  # label <- cbind(c(y, levels(d[y])),
+  #                c("HR", HR_lab),
+  #                c("IC-Low", lower_lab),
+  #                c("IC-High",upper_lab),
+  #                c("p-value" ,p_lab))
+
+  # dim_var <- ifelse(length(levels(data[,var]))==0, 1,length(levels(data[,var])))
+  #   dim_y <- length(levels(data[,y]))
+  nb <- ifelse (nmin ==1, 2, nmin)
+    N <- list()
+ for (i in 2:nb) {
+    N[[i]] <- c(levels(data[,var])[i], rep(NA, nmax-1))
+   
+  }
+  
+    nmin_mod <- ifelse(nmin == 1, 1, nmin-1)
+    deter <- ifelse(nmin == 1, 1, 2)
+    
+    
+      pval_final <- tail(round(pval, 2),1)
+  pval_final2 <- ifelse(pval_final>0.01, pval_final, "p<0.01")
+  
+  label <- cbind(c(rep(NA, deter),unlist(N)),
+                 c(NA,pretty_y, rep(levels(data[,y]),nmin_mod)),
+                 c(NA,NA, HR_lab),
+                 c(NA,NA, paste("95%CI [",lower_lab,"-")),
+                 c(NA,NA,paste(upper_lab,"]")),
+                 c( NA,pval_final2,rep(NA, nch)))
+  
+  
+  tibble(number = inter_plot_quali, label = label)
+  
+}
+
+
+poss_inter_cox_fp_multi = possibly(.f = forest_plot_cox_multi, otherwise = NULL)
+
+
+
+var_y <- c("age",  "age_cl", "BMI", "BMI_cl","menop.f",  "Size", "taille_cl", "Node_preop")
+
+pretty_var_y <- c("Age",  "Age","BMI", "BMI","Menopausal status",  "Size",  "cT","cN")
+
+tab_inter <- tibble(var_y, pretty_var_y) 
+
+try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+  poss_inter_cox_fp_multi(
+  delay = "tps_ssr",
+  status = "ssr_num",
+  y = x,
+  var = "base_label",
+  pretty_y = y,
+  multi = "surgery+rcs(BMI,5)+rcs(age,5)",
+  data = d_impFR)))
+
+
+tablo_fp <- do.call(rbind,try$forest)
+
+tablo_fp$label [1,3]<-"HR"
+tablo_fp$label [1,4]<-"IC low"
+tablo_fp$label [1,5]<-"IC high"
+tablo_fp$label [1,6]<-"p-value"
+
+
+
+tablo_def_hr <-
+  tablo_fp %>% filter(is.na(number$HR) |
+                        number$HR < 10 &
+                        number$HR > 0 &
+                        number$upper < 40 &
+                        number$lower > 0) %>% 
+  group_by(label[, 1]) %>% 
+  rowid_to_column(.) %>% 
+  mutate(num_fig = ceiling(rowid/40))
+
+
+  forestplot(
+    labeltext = tablo_def_hr$label[,2:6],
+    tablo_def_hr$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),#
+    xlab = "<==== NAC better     |   AC better ====>",
+    xlog = TRUE,
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    #line.margin = unit(40, "mm"),
+    boxsize = 0.35,
+    graphwidth = unit(80, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,#fleche si IC trop long
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="Cohort 1 - Forest Plot - Hazard Ratio DFS (Multivariable analysis)",
+    #    par(oma=c(10,1,1)),
+          hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=110,  lineend="butt", col="#99999922"),
+                           "15" = gpar(lwd=110, lineend="butt",  col="#99999922"),
+                          "22" = gpar(lwd=100, lineend="butt",  col="#99999922"))
+                          # "28" = gpar(lwd=90, lineend="butt",  col="#99999922"))
+  )
+
+```
+
+  
+\n
+In patients younger than 40, the AC strategy was associated with a DFS benefit __(HR 2.38, 95%CI [1.49-3.8])__, over the NAC strategy. This remained significantly after multivariable analysis __(HR 2.38, 95%CI [1.48-3.83]__). Conversely, patient between 40 and 50 had a DFS benefit with the NAC strategy __(HR 0.59, 95%CI [0.37-0.93])__ in univariable analysis, but this difference did not persist after multivariable analysis __(HR 0.64, 95%CI [0.4-1.01])__.  No difference between strategies was seen in patients older than 50.  
+
+Similarly, patient with postmenopausal status benefited from the NAC strategy over the AC strategy in univariable analysis __(HR 0.56, 95%CI [0.37-0.83]__, Pinteraction <0.01), which remains significant after multivariable analysis __(HR 0.6, 95%CI [0.4-0.9])__. 
+
+Whereas no difference between strategy was found in premenopausal patients in univariable analysis, premenopausal patients had a benefit form the AC strategy __(HR 1.39, 95%CI [1.01-1.93])__ in multivariable analysis.  
+
+
+#####  **DRFS**
+
+After univariable analysis, age and menopausal status were also associated with a different impact of the chemotherapy strategy on DRFS (Pinteraction<0.01 and 0.08 respectively).  
+
+```{r Fig 2A FP DRFS uni cohort1,fig.width=10,fig.height=8}
+var_y <- c("age", "age_cl",  "BMI", "BMI_cl","menop.f", "Size", "taille_cl", "Node_preop")
+
+pretty_var_y <- c("Age", "Age",  "BMI", "BMI", "Menopausal status",  "Size",  "cT", "cN")
+
+tab_inter <- tibble(var_y, pretty_var_y) 
+
+try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+  poss_inter_cox_fp(
+  delay = "tps_drfs",
+  status = "DRFS_evt",
+  y = x,
+  var = "base_label",
+  pretty_y = y,
+  data = d_impFR)))
+
+
+tablo_fp <- do.call(rbind,try$forest)
+
+tablo_fp$label [1,3]<-"HR"
+tablo_fp$label [1,4]<-"IC low"
+tablo_fp$label [1,5]<-"IC high"
+tablo_fp$label [1,6]<-"p-value"
+
+
+
+tablo_def_hr <-
+  tablo_fp %>% filter(is.na(number$HR) |
+                        number$HR < 10 &
+                        number$HR > 0 &
+                        number$upper < 40 &
+                        number$lower > 0) %>% 
+  group_by(label[, 1]) %>% 
+  rowid_to_column(.) %>% 
+  mutate(num_fig = ceiling(rowid/40))
+
+
+
+  forestplot(
+    labeltext = tablo_def_hr$label[,2:6],
+    tablo_def_hr$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),
+    xlab = "<==== NAC better     |   AC better ====>",
+    xlog = TRUE,
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    line.margin = unit(2, "mm"),
+    lty.zero =  "dashed",
+    boxsize = 0.35,
+    graphwidth = unit(70, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="Cohort 1 - Forest Plot - Hazard Ratio DRFS (Univariable analysis)",
+    #    par(oma=c(10,1,1)),
+    hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=110,  lineend="butt", col="#99999922"),
+                           "15" = gpar(lwd=110, lineend="butt",  col="#99999922"),
+                          "22" = gpar(lwd=100, lineend="butt",  col="#99999922"))
+  )
+
+```
+
+```{r Fig 2B FP DRFS multi cohort1,fig.width=10,fig.height=8}
+
+var_y <- c("age", "age_cl", "BMI", "BMI_cl","menop.f",  "Size", "taille_cl", "Node_preop")
+
+pretty_var_y <- c("Age", "Age","BMI", "BMI","Menopausal status",  "Size",  "cT","cN")
+
+tab_inter <- tibble(var_y, pretty_var_y) 
+
+try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+  poss_inter_cox_fp_multi(
+  delay = "tps_drfs",
+  status = "DRFS_evt",
+  y = x,
+  var = "base_label",
+  pretty_y = y,
+  multi = "surgery+rcs(BMI,5)+rcs(age,5)",
+  data = d_impFR)))
+
+
+tablo_fp <- do.call(rbind,try$forest)
+
+tablo_fp$label [1,3]<-"HR"
+tablo_fp$label [1,4]<-"IC low"
+tablo_fp$label [1,5]<-"IC high"
+tablo_fp$label [1,6]<-"p-value"
+
+
+
+tablo_def_hr <-
+  tablo_fp %>% filter(is.na(number$HR) |
+                        number$HR < 10 &
+                        number$HR > 0 &
+                        number$upper < 40 &
+                        number$lower > 0) %>% 
+  group_by(label[, 1]) %>% 
+  rowid_to_column(.) %>% 
+  mutate(num_fig = ceiling(rowid/40))
+
+
+ forestplot(
+    labeltext = tablo_def_hr$label[,2:6],
+    tablo_def_hr$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),#
+    xlab = "<==== NAC better     |   AC better ====>",
+    xlog = TRUE,
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    #line.margin = unit(40, "mm"),
+    boxsize = 0.35,
+    graphwidth = unit(80, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,#fleche si IC trop long
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="Cohort 1 - Forest Plot - Hazard Ratio DRFS (Multivariable analysis)",
+    #    par(oma=c(10,1,1)),
+         hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=110,  lineend="butt", col="#99999922"),
+                           "15" = gpar(lwd=110, lineend="butt",  col="#99999922"),
+                          "22" = gpar(lwd=100, lineend="butt",  col="#99999922")
+                          #"28" = gpar(lwd=200, lineend="butt",  col="#99999922"))
+  ))
+
+```
+
+
+In patients younger than 40, the AC strategy was associated with a DRFS benefit __(HR 1.97, 95%CI [1.21-3.2])__, over the NAC strategy. Conversely, patient between 40 and 50 and over 50 had a DRFS benefit with the NAC strategy __(HR 0.46, 95%CI [0.28-0.77]__ and __HR 0.61, 95%CI [0.41-0.9]__ respectively). These remained significant after multivariable analysis, for patient >40 and between 40 and 50 (Pinteraction<0.01). 
+
+Similarly, patient with postmenopausal status benefited from the NAC strategy over the AC strategy in univariable analysis __(HR 0.56, 95%CI [0.37-0.83]__, Pinteraction <0.01), which remains significant after multivariable analysis __(HR 0.65, 95%CI [0.43-0.99])__. No difference between strategies was found in premenopausal patients regarding DRFS.  
+
+
+#####  **OS**
+
+Age and menopausal status had also a different impact of the chemotherapy strategy on OS in univariable analysis (Pinteraction 0.07 and 0.01 respectively).  
+
+```{r Fig3A FP OS uni cohort1,fig.width=10,fig.height=8}
+var_y <- c("age", "age_cl",  "BMI", "BMI_cl","menop.f", "Size", "taille_cl", "Node_preop")
+
+pretty_var_y <- c("Age", "Age",  "BMI", "BMI", "Menopausal status",  "Size",  "cT", "cN")
+
+tab_inter <- tibble(var_y, pretty_var_y) 
+
+try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+  poss_inter_cox_fp(
+  delay = "tps_deces",
+  status = "deces",
+  y = x,
+  var = "base_label",
+  pretty_y = y,
+  data = d_impFR)))
+
+
+tablo_fp <- do.call(rbind,try$forest)
+
+tablo_fp$label [1,3]<-"HR"
+tablo_fp$label [1,4]<-"IC low"
+tablo_fp$label [1,5]<-"IC high"
+tablo_fp$label [1,6]<-"p-value"
+
+
+
+tablo_def_hr <-
+  tablo_fp %>% filter(is.na(number$HR) |
+                        number$HR < 10 &
+                        number$HR > 0 &
+                        number$upper < 40 &
+                        number$lower > 0) %>% 
+  group_by(label[, 1]) %>% 
+  rowid_to_column(.) %>% 
+  mutate(num_fig = ceiling(rowid/40))
+
+
+
+  forestplot(
+    labeltext = tablo_def_hr$label[,2:6],
+    tablo_def_hr$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),
+    xlab = "<==== NAC better     |   AC better ====>",
+    xlog = TRUE,
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    line.margin = unit(2, "mm"),
+    lty.zero =  "dashed",
+    boxsize = 0.35,
+    graphwidth = unit(70, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="Cohort 1 - Forest Plot - Hazard Ratio OS (Univariable analysis)",
+    #    par(oma=c(10,1,1)),
+          hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=110,  lineend="butt", col="#99999922"),
+                           "15" = gpar(lwd=110, lineend="butt",  col="#99999922"),
+                          "22" = gpar(lwd=100, lineend="butt",  col="#99999922"))
+                          #"32" = gpar(lwd=90, lineend="butt",  col="#99999922"))
+  )
+
+```
+
+We found also an interaction between menopausal status, nodal status and chemotherapy strategy (Pinteraction = 0.05), with an impaired prognosis for premenopausal node positive patient recieving NAC __(HR 2.14 95%CI 1.08-4.24)__.  
+
+
+```{r Fig3B FP OS double interaction uni, fig.height=5, fig.width=10}
+source("double interaction.R")
+
+new$label [1,3]<-"HR"
+new$label [1,4]<-"IC low"
+new$label [1,5]<-"IC high"
+new$label [1,6]<-"p-value"
+
+forestplot(
+    labeltext = new$label[,2:6],
+    new$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),
+    xlab = "<==== NAC better     |   AC better ====>",
+    xlog = TRUE,
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    line.margin = unit(2, "mm"),
+    lty.zero =  "dashed",
+    boxsize = 0.1,
+    graphwidth = unit(70, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="Cohort 1 - Forest Plot - Hazard Ratio OS (Univariable analysis)",
+    #    par(oma=c(10,1,1)),
+          hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=140,  lineend="butt", col="#99999922")
+                          # "14" = gpar(lwd=90, lineend="butt",  col="#99999922"),
+                          # "22" = gpar(lwd=90, lineend="butt",  col="#99999922")
+                          #"32" = gpar(lwd=90, lineend="butt",  col="#99999922"))
+  ))
+```
+
+
+
+```{r Fig3C FP OS multi cohort1,fig.width=10,fig.height=8}
+
+var_y <- c("age", "age_cl", "BMI", "BMI_cl","menop.f",  "Size", "taille_cl", "Node_preop")
+
+pretty_var_y <- c("Age", "Age","BMI", "BMI","Menopausal status",  "Size",  "cT","cN")
+
+tab_inter <- tibble(var_y, pretty_var_y) 
+
+try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+  poss_inter_cox_fp_multi(
+  delay = "tps_deces",
+  status = "deces",
+  y = x,
+  var = "base_label",
+  pretty_y = y,
+  multi = "surgery+rcs(BMI,5)+rcs(age,5)",
+  data = d_impFR)))
+
+
+tablo_fp <- do.call(rbind,try$forest)
+
+tablo_fp$label [1,3]<-"HR"
+tablo_fp$label [1,4]<-"IC low"
+tablo_fp$label [1,5]<-"IC high"
+tablo_fp$label [1,6]<-"p-value"
+
+
+
+tablo_def_hr <-
+  tablo_fp %>% filter(is.na(number$HR) |
+                        number$HR < 10 &
+                        number$HR > 0 &
+                        number$upper < 40 &
+                        number$lower > 0) %>% 
+  group_by(label[, 1]) %>% 
+  rowid_to_column(.) %>% 
+  mutate(num_fig = ceiling(rowid/40))
+
+
+ forestplot(
+    labeltext = tablo_def_hr$label[,2:6],
+    tablo_def_hr$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),#
+    xlab = "<==== NAC better     |   AC better ====>",
+    xlog = TRUE,
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    #line.margin = unit(40, "mm"),
+    boxsize = 0.35,
+    graphwidth = unit(80, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,#fleche si IC trop long
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="Cohort 1 - Forest Plot - Hazard Ratio OS (Multivariable analysis)",
+    #    par(oma=c(10,1,1)),
+         hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=110,  lineend="butt", col="#99999922"),
+                           "15" = gpar(lwd=110, lineend="butt",  col="#99999922"),
+                          "22" = gpar(lwd=100, lineend="butt",  col="#99999922"))
+                          #"28" = gpar(lwd=200, lineend="butt",  col="#99999922"))
+  )
+
+```
+
+The NAC strategy was associated with an OS benefit in patient older than 50 __(HR 0.46, 95%CI [0.26-0.81])__. These remained significant after multivariable analysis (Pinteraction=0.08). Conversely, no difference between the strategy was found for patient between 40 and 50 and younger than 40, in univariable nor in multivariable analysis.
+
+Patients with postmenopausal status benefited from the NAC strategy over the AC strategy in univariable analysis __(HR 0.36, 95%CI [0.19-0.69])__, which remains significant after multivariable analysis. No difference between strategy was found in premenopausal patients in multivariable analysis regarding OS. But premenopausal node positive patients had an significant impaired prognosis with the NAC strategy __(HR 2.35, 95%CI [1.14-4.83], Pinteraction < 0.01)__.  
+
+
+```{r Fig3D OS double interaction multi, fig.height=5, fig.width=10}
+
+new_multi$label [1,3]<-"HR"
+new_multi$label [1,4]<-"IC low"
+new_multi$label [1,5]<-"IC high"
+new_multi$label [1,6]<-"p-value"
+
+
+forestplot(
+    labeltext = new_multi$label[,2:6],
+    new_multi$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),
+    xlab = "<==== NAC better     |   AC better ====>",
+    xlog = TRUE,
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    line.margin = unit(2, "mm"),
+    lty.zero =  "dashed",
+    boxsize = 0.1,
+    graphwidth = unit(70, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="Cohort 1 - Forest Plot - Hazard Ratio OS (Multivariable analysis) - Menopausal status and nodal status interaction",
+    #    par(oma=c(10,1,1)),
+          hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=140,  lineend="butt", col="#99999922")
+                          # "14" = gpar(lwd=90, lineend="butt",  col="#99999922"),
+                          # "22" = gpar(lwd=90, lineend="butt",  col="#99999922")
+                          #"32" = gpar(lwd=90, lineend="butt",  col="#99999922"))
+  ))
+
+```
+
+
+## Cohort 2 : validation Oncofert
+
+### Population description
+
+```{r description cohort 2, message=FALSE, warning=FALSE}
+
+var <- c("age", "age_young_cl_40_bin", "bmi", "bmi_4cl", "tclin", "ctuicc_2cl", "cnuicc_2cl",  "surgery", "chimio")
+
+label_var <-c(age ~ "Age", age_young_cl_40_bin~ "Age", bmi~"BMI", bmi_4cl ~ "BMI", tclin ~ "Initial clinical tumor size", ctuicc_2cl ~ "Initial clinical tumor size", cnuicc_2cl ~ "Nodal status", surgery ~ "Surgery")
+
+dd %>% select(all_of(var)) %>%
+  tbl_summary(by = chimio,  label = label_var, missing_text = "(Missing)") %>%
+  bold_labels() %>%
+  modify_header(label ~ "**Variable**") %>%
+  #modify_spanning_header(c("stat_1", "stat_2", "stat_3") ~ "**Molecular subtypes**") %>%
+  add_overall() %>%
+  add_p()
+
+dd <- as.data.frame(dd)
+
+```
+
+
+### Analysis before PS
+
+```{r création population SP cohort2}
+# on rappelle que toutes les variables quantitatives sont lineaires
+# dnona <- subset(dd, !is.na(dd$bmi))
+# multi <- glm (chimio~age+ bmi +tclin+cnuicc_2cl , data=dnona, family=binomial)
+# library(MASS)
+#stepAIC(multi,direction = "backward")
+
+multi_def <- glm( chimio ~ age  + tclin + cnuicc_2cl , family = binomial, data = dd)
+
+set.seed(1703)
+PRED <- multi_def$fitted.values
+dd$PRED <- PRED
+
+
+dd$base_mod <-NA
+dd$base_mod[dd$chimio=="AC"] <- 0
+dd$base_mod[dd$chimio=="NAC"] <- 1
+
+
+dd$w <- dd$base_mod/dd$PRED + (1 - dd$base_mod)/(1 - dd$PRED)
+dd$wt = pmin(dd$w, quantile(dd$w, 0.99))
+
+dd$base <- as.factor(ifelse(dd$base_mod == 0, 0, 1))
+
+```
+
+Pre PS analysis are available [here](Lum-b-before-PS-cohort-2.html)
+
+### Analysis after PS
+
+#### Kaplan Meier curves
+
+
+As it is a weighted population, risk table are not displayed. 
+
+P-value is obtained with a weighted Cox model.  
+
+```{r KM OS pondéré cohort2, fig.width=9,fig.height=12,autodep=FALSE}
+
+source("univarieSP.R")
+fit_os               <- survfit(Surv( dd$delay_os_diag, dd$status_vital)	~chimio,  data = dd, weights = wt)
+palette_jco  <- c(pal_jco("default")(10))
+
+
+p_os <- ggsurvplot(fit_os,data=dd, 
+                               palette = palette_jco[1:2],
+                              pval = FALSE,
+                              # legend = c(0.6, 0.25), 
+                              xlim=c(0,100),
+                              legend.title = "CT strategy", 
+                              legend.labs = levels(dd$chimio) ,
+                              legend = c(0.2, 0.20) ,
+                              pval.coord = c(60,0.15),
+                              pval.size = 4, 
+                             
+                              risk.table = FALSE , 
+                              risk.table.fontsize = 4,
+                              risk.table.height = 0.3,
+                              tables.y.text=FALSE,
+                              font.legend = 10 , size = 0.8, censor=FALSE)
+    
+                              p_os$plot <- p_os$plot + theme(plot.title = element_text(hjust = 0.5))+ ylab("Overall survival")
+                              p_os$plot <- p_os$plot + annotate("text", x=40, y=0.01, size = 5,
+                                              label ="HR = 0.62 [0.30–1.30]; p = 0.2")
+
+					
+#p_os
+```
+
+
+
+
+```{r KM DFS pondéré cohort 2, fig.width=9,fig.height=12,autodep=FALSE}
+
+fit_dfs <- survfit(Surv(delay_rfs_diag, status_rfs_diag)	~ chimio ,  data = dd,  weights = wt)
+palette_jco  <- c(pal_jco("default")(10))
+
+
+p_dfs<- ggsurvplot(fit_dfs,data=dd, 
+                               palette = palette_jco[1:2],
+                              pval = FALSE,
+                              # legend = c(0.6, 0.25), 
+                              xlim=c(0,100),
+                              legend.title = "CT strategy", 
+                              legend.labs = levels(dd$chimio) ,
+                              legend = c(0.2, 0.20) ,
+                              pval.coord = c(60,0.15),
+                              pval.size = 4, 
+                             
+                              risk.table = F , 
+                              #risk.table.fontsize = 4,risk.table.height = 0.3,
+                              #tables.y.text=FALSE,
+                              font.legend = 10 , size = 0.8, censor=FALSE)
+    
+                              p_dfs$plot <- p_dfs$plot + theme(plot.title = element_text(hjust = 0.5))+ ylab("Disease-free survival")
+                              p_dfs$plot <- p_dfs$plot + annotate("text", x=40, y=0.01, size = 5,
+                                              label ="HR = 0.98 [0.58–1.67]; p = 0.9")
+					
+#p_dfs
+```
+
+``` {r KM DRFS pondere cohort 2, fig.width=9,fig.height=12,autodep=FALSE}
+
+fit_drfs <- survfit(Surv(delay_drfs_diag, status_drfs_diag)	~ chimio ,  data = dd,  weights = wt)
+palette_jco  <- c(pal_jco("default")(10))
+
+
+p_drfs<- ggsurvplot(fit_drfs,data=dd, 
+                               palette = palette_jco[1:2],
+                              pval = F,
+                              # legend = c(0.6, 0.25), 
+                              xlim=c(0,100),
+                              legend.title = "CT strategy", 
+                              legend.labs = levels(dd$chimio) ,
+                              legend = c(0.2, 0.20) ,
+                              pval.coord = c(60,0.15),
+                              pval.size = 4, 
+                              #title = "Distant Recurrence Free Survival",
+                              risk.table = FALSE , 
+                              #risk.table.fontsize = 4,risk.table.height = 0.3,
+                              #tables.y.text=FALSE,
+                              font.legend = 10 , size = 0.8, censor=FALSE)
+                              p_drfs$plot <- p_drfs$plot + annotate("text", x=40, y=0.01, size = 5,
+                                              label ="HR = 0.82 [0.47–1.44]; p = 0.5")
+                             p_drfs$plot <- p_drfs$plot + theme(plot.title = element_text(hjust = 0.5)) +
+                               ylab("Distant Recurrence Free Survival")
+					
+#p_drfs
+
+```
+
+```{r FigA9ABC KM regroupé cohort2, fig.height=6, fig.width=18}
+list_g <- list()
+list_g[[1]] <- p_dfs
+list_g[[3]] <- p_os
+list_g[[2]] <- p_drfs
+
+figKM_sp <- arrange_ggsurvplots(list_g, print = TRUE,   ncol = 3, nrow = 1)
+figKM_sp
+```
+
+The IPTW-adjusted RFS, was not significantly different in the NAC group compared to the AC group in univariable analysis __(HR = 0.98, 95%IC [0.58 – 1.67]; p = 0.9)__.  
+
+The IPTW-adjusted DRFS was significantly better in the NAC group __(HR = 0.82, 95%IC [0.47 – 1.44]; p = 0.5)__ in univariable analysis.  
+
+The IPTW-adjusted OS was not significantly different in the NAC group __(HR = 0.62, 95%IC [0.30 – 1.30]; p = 0.2)__ in univariable analysis.  
+
+#### Cox multivariable regression model
+
+We performed multivariable cox regression model with adjustment on the type of surgery performed.  
+
+##### **RFS**
+
+
+The IPTW-adjusted RFS was significantly lower in the NAC group compared to the AC group in multivariable analysis __(HR = 2.40, 95%IC [1.24 – 4.63]; p = 0.009)__. The performance of a radical mastectomy was associated with lower RFS either.  
+
+
+```{r cox uni RFS cohort2}
+survuni_rfs <- coxph (Surv(delay_rfs_diag, status_rfs_diag)	~ chimio + surgery,  data = dd, method="breslow", weights = wt, robust = F)
+uni_rfs <- cox_summary(survuni_rfs)
+
+
+survuni_rfs %>% tbl_regression(label = list(chimio~"Chemotherapy", surgery~"Surgery"), exp = TRUE, add_estimate_to_reference_rows = TRUE) %>% bold_labels() 
+
+```
+\  
+
+
+
+##### **DRFS**
+
+
+The IPTW-adjusted DRFS was significantly lower in the NAC group compared to the AC group in multivariable analysis __(HR = 2.14, 95%IC [1.08 – 4.22]; p = 0.029)__. The performance of a radical mastectomy was associated with lower DRFS either.  
+
+
+```{r cox uni DRFS cohort2}
+survuni_drfs <- coxph (Surv(delay_drfs_diag, status_drfs_diag)	~ chimio + surgery,  data = dd, method="breslow", weights = wt, robust = F)
+uni_drfs <- cox_summary(survuni_drfs)
+
+survuni_drfs %>% tbl_regression(label = list(chimio~"Chemotherapy", surgery~"Surgery"), exp = TRUE, add_estimate_to_reference_rows = TRUE) %>% bold_labels() 
+```
+\  
+
+
+##### **OS**
+
+The IPTW-adjusted OS was not significantly different in the NAC group __(HR = 1.98, 95%IC [0.77 – 5.12]; p = 0.2)__ after adjustement on the type of surgery performed.   
+
+The performance of a radical mastectomy was associated with lower OS.\ 
+
+
+
+```{r cox uni OS cohort2}
+survuni_os <- coxph (Surv(delay_os_diag, status_vital)	~ chimio + surgery,  data = dd, method="breslow", weights = wt, robust = F)
+uni_os <- cox_summary(survuni_os)
+
+survuni_os %>% tbl_regression(label = list(chimio~"Chemotherapy", surgery~"Surgery"), exp = TRUE, add_estimate_to_reference_rows = TRUE) %>% bold_labels() 
+```
+ 
+
+
+#### Forest plot
+
+```{r  formule forest plot cohort 2,  fig.width=10,fig.height=8}
+forest_plot_cox <- function(y, var, pretty_y,delay, status, data,multi, wt){
+  
+  if(missing(multi)) {
+    f<-as.formula(paste("Surv(",delay,",",status, ")", "~",y,":",var,"+", y))
+
+  } else {
+    f<-as.formula(paste("Surv(",delay,",",status, ")", "~",y,":",var,"+", y, "+", multi))
+  }
+  
+  #f<-as.formula(paste("Surv(",delay,",",status, ")", "~",y,":",var,"+", y))
+  mod <- coxph(f,  weight = wt, robust=F,data = data)
+  uni <- cox_summary(mod)
+  
+  fp<-as.formula(paste("Surv(",delay,",",status, ")", "~",y,"*",var))
+  mod2 <- coxph(fp,  weight = wt, robust=F,data = data)
+  pval <- car::Anova(mod2, test.statistic="Wald")$`Pr(>Chisq)`
+  
+  nmax <- length(levels(data[,y]))
+  #nmin <- length(levels(data[,var]))
+  nmin<- ifelse(length(levels(data[,var]))==0, 1,length(levels(data[,var])))
+  #nch <- (nmax*nmin)-nmax
+  nch <- ifelse(is.numeric(data[,var]),nmax,(nmax*nmin)-nmax )
+  
+  HR_plot  = round(tail(uni$exp.coef.,nch),2)
+  lower_plot = round(tail(uni$IC_inf.,nch),2)
+  upper_plot = round(tail(uni$IC_sup.,nch),2)
+  p_plot = round(tail(uni$P_value,nch),2)
+  
+  HR_lab <- as.character(HR_plot)
+  lower_lab <- as.character(lower_plot)
+  upper_lab <- as.character(upper_plot)
+  p_lab <- as.character(p_plot)
+  
+  inter_plot_quali<-
+    data.frame(
+      HR  = c(NA,NA,HR_plot),
+      lower = c( NA,NA,lower_plot),
+      upper = c(NA, NA,upper_plot), 
+      p = c( NA,NA,p_plot))
+  
+  # label <- cbind(c(y, levels(d[y])),
+  #                c("HR", HR_lab),
+  #                c("IC-Low", lower_lab),
+  #                c("IC-High",upper_lab),
+  #                c("p-value" ,p_lab))
+  
+  # dim_var <- ifelse(length(levels(data[,var]))==0, 1,length(levels(data[,var])))
+  #   dim_y <- length(levels(data[,y]))
+  nb <- ifelse (nmin ==1, 2, nmin)
+  N <- list()
+  for (i in 2:nb) {
+    N[[i]] <- c(levels(data[,var])[i], rep(NA, nmax-1))
+    
+  }
+  
+  nmin_mod <- ifelse(nmin == 1, 1, nmin-1)
+  deter <- ifelse(nmin == 1, 1, 2)
+  
+  pval_final <- tail(round(pval, 2),1)
+  pval_final2 <- ifelse(pval_final>0.01, pval_final, "p<0.01")
+  
+  label <- cbind(c(rep(NA, deter),unlist(N)),
+                 c(NA,pretty_y, rep(levels(data[,y]),nmin_mod)),
+                 c(NA,NA, HR_lab),
+                 c(NA,NA, paste("95%CI [",lower_lab,"-")),
+                 c(NA,NA,paste(upper_lab,"]")),
+                 c( NA,pval_final2,rep(NA, nch)))
+  
+  
+  tibble(number = inter_plot_quali, label = label)
+  
+}
+
+  
+poss_inter_cox_fp = possibly(.f = forest_plot_cox, otherwise = NULL)
+```
+
+
+##### **RFS**
+
+After univariable analysis, age, BMI and initial nodal status were associated with a different impact of the chemotherapy strategy on RFS (Pinteraction < 0.01).  
+
+```{r FigA12A FP DFS uni cohort2,fig.width=10,fig.height=8}
+var_y <- c("age_young_cl_40_bin", "bmi_4cl", "ctuicc_2cl", "cnuicc_2cl")
+
+pretty_var_y <- c("Age", "BMI", "cT","cN")
+
+
+tab_inter <- tibble(var_y, pretty_var_y) 
+
+try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+  poss_inter_cox_fp(
+  delay = "delay_rfs_diag",
+  status = "status_rfs_diag",
+  y = x,
+  var = "chimio",
+  pretty_y = y,
+  wt = wt,
+  data = dd)))
+
+
+tablo_fp <- do.call(rbind,try$forest)
+
+tablo_fp$label [1,3]<-"HR"
+tablo_fp$label [1,4]<-"IC low"
+tablo_fp$label [1,5]<-"IC high"
+tablo_fp$label [1,6]<-"p-value"
+
+tablo_fp$label[,3][tablo_fp$number$HR > 15] <- "-"
+tablo_fp$label[,4][tablo_fp$number$lower <0.001] <- "-"
+tablo_fp$label[,5][tablo_fp$number$upper>100] <- "-"
+
+tablo_fp$number$HR[tablo_fp$number$HR > 15] <- NA
+tablo_fp$number$lower[tablo_fp$number$lower <0.001] <- NA
+tablo_fp$number$upper[tablo_fp$number$upper>100] <- NA
+
+tablo_def_hr <-tablo_fp 
+
+# tablo_def_hr <-
+#   tablo_fp %>% filter(is.na(number$HR) |
+#                         number$HR < 10 &
+#                         number$HR > 0 &
+#                         number$upper < 40 &
+#                         number$lower > 0) %>% 
+#   group_by(label[, 1]) %>%
+#   rowid_to_column(.) %>%
+#   mutate(num_fig = ceiling(rowid/40))
+
+
+forestplot(
+    labeltext = tablo_def_hr$label[,2:6],
+    tablo_def_hr$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),
+    xlab = "<==== NAC better     |   AC better ====>",
+    xlog = TRUE,
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    line.margin = unit(2, "mm"),
+    lty.zero =  "dashed",
+    boxsize = 0.35,
+    graphwidth = unit(70, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="Cohort 2 - Forest Plot - Hazard Ratio DFS (Univariable analysis)",
+        #par(oma=c(10,1,1)),
+           hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=130,  lineend="butt", col="#99999922"),
+                           "14" = gpar(lwd=130, lineend="butt",  col="#99999922")
+                          #"20" = gpar(lwd=120, lineend="butt",  col="#99999922"))
+                          )
+    
+  )
+
+```
+
+
+In patients older than 40, the NAC strategy was associated with a RFS benefit __(HR 0.24, 95%CI [0.08-0.75])__, over the AC strategy.  
+
+Similarly, patient with T3-T4 initial tumor size benefited from the NAC strategy over the AC strategy in univariable analysis __(HR 0.34, 95%CI [0.13-0.9])__.  
+
+No difference between strategies was seen for other subgroups.  
+
+
+
+```{r FigA12B FP DFS multi cohort2,fig.width=10,fig.height=8}
+var_y <- c("age_young_cl_40_bin", "bmi_4cl", "ctuicc_2cl", "cnuicc_2cl")
+
+pretty_var_y <- c("Age", "BMI", "cT","cN")
+
+var_multi <- "surgery"
+
+tab_inter <- tibble(var_y, pretty_var_y) 
+
+try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+  poss_inter_cox_fp(
+  delay = "delay_rfs_diag",
+  status = "status_rfs_diag",
+  y = x,
+  var = "chimio",
+  pretty_y = y,
+  multi = var_multi,
+  wt = wt,
+  data = dd)))
+
+
+tablo_fp <- do.call(rbind,try$forest)
+
+tablo_fp$label [1,3]<-"HR"
+tablo_fp$label [1,4]<-"IC low"
+tablo_fp$label [1,5]<-"IC high"
+tablo_fp$label [1,6]<-"p-value"
+
+tablo_fp$label[,3][tablo_fp$number$HR > 15] <- "-"
+tablo_fp$label[,4][tablo_fp$number$lower <0.001] <- "-"
+tablo_fp$label[,5][tablo_fp$number$upper>100] <- "-"
+
+tablo_fp$number$HR[tablo_fp$number$HR > 15] <- NA
+tablo_fp$number$lower[tablo_fp$number$lower <0.001] <- NA
+tablo_fp$number$upper[tablo_fp$number$upper>100] <- NA
+
+tablo_def_hr <-tablo_fp 
+
+# tablo_def_hr <-
+#   tablo_fp %>% filter(is.na(number$HR) |
+#                         number$HR < 10 &
+#                         number$HR > 0 &
+#                         number$upper < 40 &
+#                         number$lower > 0) %>% 
+#   group_by(label[, 1]) %>% 
+#   rowid_to_column(.) %>% 
+#   mutate(num_fig = ceiling(rowid/40))
+
+
+forestplot(
+    labeltext = tablo_def_hr$label[,2:6],
+    tablo_def_hr$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),
+    xlab = "<==== NAC better     |   AC better ====>",
+    xlog = TRUE,
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    line.margin = unit(2, "mm"),
+    lty.zero =  "dashed",
+    boxsize = 0.35,
+    graphwidth = unit(70, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="Cohort 2 - Forest Plot - Hazard Ratio DFS (Multivariable analysis)",
+        #par(oma=c(10,1,1)),
+        hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=130,  lineend="butt", col="#99999922"),
+                           "14" = gpar(lwd=130, lineend="butt",  col="#99999922"))
+                          #"20" = gpar(lwd=120, lineend="butt",  col="#99999922"))
+  )
+
+```
+\n
+After adjustement on surgical procedure, in patients younger than 40, the AC strategy was associated with a RFS benefit __(HR 3.44, 95%CI [1.59-7.43])__, over the NAC strategy.  
+
+Similarly, patient with positive node status (N1-2-3) benefited from the AC strategy over the NAC strategy in multivariable analysis __(HR 8.04, 95%CI [2.37-27.31])__. 
+
+No difference between strategies was seen for other subgroups.  
+
+
+##### **DRFS**
+
+After univariable analysis, age, BMI and initial nodal status were associated with a different impact of the chemotherapy strategy on DRFS (Pinteraction < 0.01).  
+
+```{r FigA10A FP DRFS uni cohort 2,fig.width=10,fig.height=8}
+var_y <- c("age_young_cl_40_bin", "bmi_4cl","ctuicc_2cl", "cnuicc_2cl")
+
+pretty_var_y <- c("Age", "BMI", "cT", "cN")
+
+
+tab_inter <- tibble(var_y, pretty_var_y) 
+
+try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+  poss_inter_cox_fp(
+  delay = "delay_drfs_diag",
+  status = "status_drfs_diag",
+  y = x,
+  var = "chimio",
+  pretty_y = y,
+  wt=wt,
+  data = dd)))
+
+
+tablo_fp <- do.call(rbind,try$forest)
+
+tablo_fp$label [1,3]<-"HR"
+tablo_fp$label [1,4]<-"IC low"
+tablo_fp$label [1,5]<-"IC high"
+tablo_fp$label [1,6]<-"p-value"
+
+tablo_fp$label[,3][tablo_fp$number$HR > 15] <- "-"
+tablo_fp$label[,4][tablo_fp$number$lower <0.001] <- "-"
+tablo_fp$label[,5][tablo_fp$number$upper>100] <- "-"
+
+tablo_fp$number$HR[tablo_fp$number$HR > 15] <- NA
+tablo_fp$number$lower[tablo_fp$number$lower <0.001] <- NA
+tablo_fp$number$upper[tablo_fp$number$upper>100] <- NA
+
+ tablo_def_hr <-   tablo_fp
+# tablo_def_hr <-
+#   tablo_fp %>% filter(is.na(number$HR) |
+#                         number$HR < 10 &
+#                         number$HR > 0 &
+#                         number$upper < 40 &
+#                         number$lower > 0) %>% 
+#   group_by(label[, 1]) %>% 
+#   rowid_to_column(.) %>% 
+#   mutate(num_fig = ceiling(rowid/40))
+
+
+forestplot(
+    labeltext = tablo_def_hr$label[,2:6],
+    tablo_def_hr$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),
+    xlab = "<==== NAC better     |   AC better ====>",
+    xlog = TRUE,
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    line.margin = unit(2, "mm"),
+    lty.zero =  "dashed",
+    boxsize = 0.35,
+    graphwidth = unit(70, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="Cohort 2 - Forest Plot - Hazard Ratio DRFS (Univariable analysis)",
+        #par(oma=c(10,1,1)),
+        hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=130,  lineend="butt", col="#99999922"),
+                           "14" = gpar(lwd=130, lineend="butt",  col="#99999922")
+                         # "23" = gpar(lwd=100, lineend="butt",  col="#99999922")
+                        )
+  )
+
+```
+\n
+
+
+In patients older than 40, the NAC strategy was associated with a RFS benefit __(HR 0.25, 95%CI [0.08-0.76])__, over the AC strategy.  
+
+Similarly, patient with negative initial node status benefited from the NAC strategy over the AC strategy in univariable analysis __(HR 0.29, 95%CI [0.1-0.81])__.  
+
+No difference between strategies was seen for other subgroups.  
+
+
+```{r FigA10B FP DRFS multi cohort 2,fig.width=10,fig.height=8}
+var_y <- c("age_young_cl_40_bin", "bmi_4cl", "ctuicc_2cl" ,"cnuicc_2cl")
+
+pretty_var_y <- c("Age", "BMI", "cT", "cN")
+
+var_multi <- "surgery"
+tab_inter <- tibble(var_y, pretty_var_y) 
+
+try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+  poss_inter_cox_fp(
+  delay = "delay_drfs_diag",
+  status = "status_drfs_diag",
+  y = x,
+  var = "chimio",
+  pretty_y = y,
+  multi = var_multi,
+  wt=wt,
+  data = dd)))
+
+
+tablo_fp <- do.call(rbind,try$forest)
+
+tablo_fp$label [1,3]<-"HR"
+tablo_fp$label [1,4]<-"IC low"
+tablo_fp$label [1,5]<-"IC high"
+tablo_fp$label [1,6]<-"p-value"
+
+
+tablo_fp$label[,3][tablo_fp$number$HR > 15] <- "-"
+tablo_fp$label[,4][tablo_fp$number$lower <0.001] <- "-"
+tablo_fp$label[,5][tablo_fp$number$upper>100] <- "-"
+
+tablo_fp$number$HR[tablo_fp$number$HR > 15] <- NA
+tablo_fp$number$lower[tablo_fp$number$lower <0.001] <- NA
+tablo_fp$number$upper[tablo_fp$number$upper>100] <- NA
+
+ tablo_def_hr <-   tablo_fp
+# tablo_def_hr <-
+#   tablo_fp %>% filter(is.na(number$HR) |
+#                         number$HR < 10 &
+#                         number$HR > 0 &
+#                         number$upper < 40 &
+#                         number$lower > 0) %>% 
+#   group_by(label[, 1]) %>% 
+#   rowid_to_column(.) %>% 
+#   mutate(num_fig = ceiling(rowid/40))
+
+
+forestplot(
+    labeltext = tablo_def_hr$label[,2:6],
+    tablo_def_hr$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),
+    xlab = "<==== NAC better     |   AC better ====>",
+    xlog = TRUE,
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    line.margin = unit(2, "mm"),
+    lty.zero =  "dashed",
+    boxsize = 0.35,
+    graphwidth = unit(70, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="Cohort2 - Forest Plot - Hazard Ratio DRFS (Multivariable analysis)",
+        #par(oma=c(10,1,1)),
+           hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=130,  lineend="butt", col="#99999922"),
+                           "14" = gpar(lwd=130, lineend="butt",  col="#99999922")
+                         # "23" = gpar(lwd=100, lineend="butt",  col="#99999922")
+                        )
+  )
+
+```
+
+After adjustement on surgical procedure, patients younger than 40 seems to benefit from the AC strategy __(HR 3.02, 95%CI [1.37-6.67])__. Similarly, patients with positive node status (N1-2-3) benefited from the AC strategy __(HR 7.86, 95%CI [2.3-26.84])__. 
+
+Patient with BMI between 18.5 and 25 seems to benefit from the AC strategy __(HR 3.24, 95%CI [1.22-8.6])__.  
+
+No difference between strategies was seen for other subgroups.  
+
+##### **OS**
+
+After univariable analysis, age, BMI and initial tumor size and nodal status were associated with a different impact of the chemotherapy strategy on OS (Pinteraction < 0.01).  
+
+```{r FigA11A FP OS univarié cohort2,fig.width=10,fig.height=8}
+dd <- as.data.frame(dd)
+var_y <- c("age_young_cl_40_bin","bmi_4cl", "ctuicc_3cl", "cnuicc_2cl")
+
+
+pretty_var_y <- c("Age", "BMI", "cT","cN")
+
+tab_inter <- tibble(var_y, pretty_var_y) 
+
+try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+  poss_inter_cox_fp(
+  delay = "delay_os_diag",
+  status = "status_vital",
+  y = x,
+  var = "chimio",
+  pretty_y = y,
+  wt= wt,
+  data = dd)))
+
+
+tablo_fp <- do.call(rbind,try$forest)
+
+tablo_fp$label [1,3]<-"HR"
+tablo_fp$label [1,4]<-"IC low"
+tablo_fp$label [1,5]<-"IC high"
+tablo_fp$label [1,6]<-"p-value"
+
+tablo_fp$label[,3][tablo_fp$number$HR > 15] <- "-"
+tablo_fp$label[,4][tablo_fp$number$lower <0.001] <- "-"
+tablo_fp$label[,5][tablo_fp$number$upper>100] <- "-"
+
+tablo_fp$number$HR[tablo_fp$number$HR > 15] <- NA
+tablo_fp$number$lower[tablo_fp$number$lower <0.001] <- NA
+tablo_fp$number$upper[tablo_fp$number$upper>100] <- NA
+
+ tablo_def_hr <-   tablo_fp
+# tablo_def_hr <-
+#   tablo_fp %>% filter(is.na(number$HR) |
+#                         number$HR < 10 &
+#                         number$HR > 0 &
+#                         number$upper < 40 &
+#                         number$lower > 0) %>% 
+#   group_by(label[, 1]) %>% 
+#   rowid_to_column(.) %>% 
+#   mutate(num_fig = ceiling(rowid/40))
+
+
+forestplot(
+    labeltext = tablo_def_hr$label[,2:6],
+    tablo_def_hr$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),
+    xlab = "<==== NAC better     |   AC better ====>",
+    xlog = TRUE,
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    line.margin = unit(2, "mm"),
+    lty.zero =  "dashed",
+    boxsize = 0.35,
+    graphwidth = unit(70, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="Cohort2 - Forest Plot - Hazard Ratio OS (Univariable analysis)",
+        #par(oma=c(10,1,1)),
+          hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=130,  lineend="butt", col="#99999922"),
+                           "14" = gpar(lwd=130, lineend="butt",  col="#99999922"))
+  )
+
+```
+
+
+
+In patients older than 40, the NAC strategy was associated with a OS benefit __(HR 0.12, 95%CI [0.02-0.74])__, over the AC strategy.  
+
+Similarly, patient with initial T3-4 tumor benefited from the NAC strategy over the AC strategy in univariable analysis __(HR 0.06, 95%CI [0.01-0.26])__.  
+
+No difference between strategies was seen for other subgroups.  
+
+
+```{r Fig A11B FP OS  multi cohort2,fig.width=10,fig.height=8}
+var_y <- c("age_young_cl_40_bin","bmi_4cl", "ctuicc_3cl", "cnuicc_2cl")
+
+var_multi <- "surgery"
+pretty_var_y <- c("Age", "BMI", "cT","cN")
+
+tab_inter <- tibble(var_y, pretty_var_y) 
+
+try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+  poss_inter_cox_fp(
+  delay = "delay_os_diag",
+  status = "status_vital",
+  y = x,
+  var = "chimio",
+  pretty_y = y,
+  multi = var_multi,
+  wt= wt,
+  data = dd)))
+
+
+tablo_fp <- do.call(rbind,try$forest)
+
+tablo_fp$label [1,3]<-"HR"
+tablo_fp$label [1,4]<-"IC low"
+tablo_fp$label [1,5]<-"IC high"
+tablo_fp$label [1,6]<-"p-value"
+
+tablo_fp$label[,3][tablo_fp$number$HR > 15] <- "-"
+tablo_fp$label[,4][tablo_fp$number$lower <0.001] <- "-"
+tablo_fp$label[,5][tablo_fp$number$upper>100] <- "-"
+
+tablo_fp$number$HR[tablo_fp$number$HR > 15] <- NA
+tablo_fp$number$lower[tablo_fp$number$lower <0.001] <- NA
+tablo_fp$number$upper[tablo_fp$number$upper>100] <- NA
+
+ tablo_def_hr <-   tablo_fp
+# tablo_def_hr <-
+#   tablo_fp %>% filter(is.na(number$HR) |
+#                         number$HR < 10 &
+#                         number$HR > 0 &
+#                         number$upper < 40 &
+#                         number$lower > 0) %>% 
+#   group_by(label[, 1]) %>% 
+#   rowid_to_column(.) %>% 
+#   mutate(num_fig = ceiling(rowid/40))
+
+
+forestplot(
+    labeltext = tablo_def_hr$label[,2:6],
+    tablo_def_hr$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),
+    xlab = "<==== NAC better     |   AC better ====>",
+    xlog = TRUE,
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    line.margin = unit(2, "mm"),
+    lty.zero =  "dashed",
+    boxsize = 0.35,
+    graphwidth = unit(70, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="Cohort2 - Forest Plot - Hazard Ratio OS (Multivariable analysis)",
+        #par(oma=c(10,1,1)),
+          hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=130,  lineend="butt", col="#99999922"),
+                           "14" = gpar(lwd=130, lineend="butt",  col="#99999922"))
+  )
+
+```
+
+After adjustement on surgical procedure, patients with initial T3-4 tumor benefited from the NAC strategy over the AC strategy __(HR 0.09, 95%CI [0.02-0.44])__. 
+
+No difference between strategies was seen for other subgroups.  
+
+
+## Cohort 3 : validation Canto
+
+
+```{r, include = FALSE}
+#load("canto_surv.RData")#9750
+#canto_surv$SUBJID <- canto_surv$RECNUM
+
+load("canto_surv_tg.RData")#9750
+canto_surv_tg$SUBJID <- canto_surv_tg$RECNUM
+
+load("04_canto_preprocessed_labels.RData")
+#load("04_canto_preprocessed_labels.RData")#9510
+canto  <- database_preprocessed_labels
+
+
+canto <- left_join(canto, canto_surv_tg, by =  c("SUBJID"))
+
+```
+
+
+```{r}
+
+#tcreation d'une variable de chimio
+canto$chimio <- canto$CHIMIO
+canto$chimio[canto$CHIMIONEO == 1] <-  "NAC"
+canto$chimio[canto$CHIMIOADJ == 1] <-  "AC"
+canto$chimio[canto$chimio == 1] <- NA
+canto$chimio[canto$chimio == 0] <- "No"
+canto$chimio <- as.factor(canto$chimio)  
+
+#on rectifie les grades
+canto$grade_biop_tst <- ifelse(is.na(canto$grade_3cl_biop_L), canto$grade_3cl_biop_R, canto$grade_3cl_biop_L)
+canto$grade_surg_tst <- ifelse(is.na(canto$grade_3cl_surg_L), canto$grade_3cl_surg_R, canto$grade_3cl_surg_L)
+canto$grade_3cl_def <- case_when((canto$chimio == "NAC" & !is.na(canto$grade_biop_tst)) ~ canto$grade_biop_tst,
+            TRUE ~ canto$grade_surg_tst)
+
+canto$im_biop_tst <- ifelse(is.na(canto$index_mitotic_biop_L),
+                            canto$index_mitotic_biop_R, canto$index_mitotic_biop_L)
+canto$im_surg_tst <- ifelse(is.na(canto$index_mitotic_surg_L),
+                            canto$index_mitotic_surg_R,canto$index_mitotic_surg_L)
+canto$index_mitotic <- as.factor(case_when((canto$chimio == "NAC" & !is.na(canto$im_biop_tst)) ~
+                                             canto$im_biop_tst,
+                                           TRUE ~ canto$im_surg_tst))
+
+#on rectifie les tailles cliniques
+canto$tclin <- ifelse (is.na(canto$TAILLECLIN_G), canto$TAILLECLIN_D,canto$TAILLECLIN_G)
+
+#on remplace les k et les x de la variable NCLIN
+canto$NCLIN_D <- factor(canto$NCLIN_D, labels = c("0","1","2","3",NA,NA))
+canto$NCLIN_G <- factor(canto$NCLIN_G, labels = c("0","1","2","3",NA,NA))
+
+#là, il y a 613 patientes qui sont N0 pour D et G mais qui ne sont pas N0 dans nuicc_2L
+#table( canto$NCLIN_D,canto$NCLIN_G,canto$nuicc_2cl,useNA="ifany")
+canto$ggl <-  canto$nuicc_2cl
+canto$ggl[canto$NCLIN_D == 0 & canto$NCLIN_G == 0] <- "N0"
+
+
+#on peut commencer!
+canto$nuicc_2cl <- canto$ggl
+
+#on enlève les patientes sant CT
+dcant <-  subset (canto, canto$chimio != "No")# n =4962
+#les patientes avec des tumeurs de moins de 20mm
+dcant <-  subset (dcant, dcant$tclin > 20)
+#les grades 1 et 2
+dcant <- subset(dcant, dcant$grade_3cl_def == 3)
+#on garde les luminales
+dcant <- subset(dcant, dcant$subtype == "Luminal")
+#on vire les non menopausées
+#dcant <- subset(dcant, dcant$menop == "Premenopausal")
+#on vier les patientes uiq n'ont pas été opérée
+dcant <- subset(dcant, dcant$breast_surgery_3cl != "No surgery")
+
+dcant$chimio <- droplevels(dcant$chimio)
+dcant$tuicc_3cl <- droplevels(dcant$tuicc_3cl)
+
+dcant$age_young_cl_40_bin <- as.factor(ifelse(dcant$age < 40, 0,
+                             ifelse(dcant$age >= 40 & dcant$age < 50, 1,
+                              ifelse(dcant$age > 50, 2, NA))))
+levels(dcant$age_young_cl_40_bin) = c("[0-40)", "[40-50)", "50+")
+
+dcant$breast_surgery_3cl <- droplevels(dcant$breast_surgery_3cl)
+```
+
+```{r création population SP cohort 3}
+dcant <- subset(dcant, !is.na(dcant$ggl) & !is.na(dcant$age) & ! is.na(dcant$bmi))
+# 
+# attention pour que ça marche il faut enlever les NA de menop!! là je les ai remis parce que comme menop n'apparait pas dans le SP, au moins je gagne qq patientes
+# multi <- glm (chimio~age+ bmi +tclin+nuicc_2cl+menop , data=dcant, family=binomial)
+# library(MASS)
+ #stepAIC(multi,direction = "backward")
+# dcant <- subset(dcant, !is.na(dcant$ggl))
+# dcant <- subset(dcant, !is.na(dcant$age))
+
+
+multi <- glm (chimio~ age+tclin+ggl , data=dcant, family=binomial)
+
+set.seed(1703)
+PRED <- multi$fitted.values
+dcant$PRED <- PRED
+
+dcant$base_mod <-NA
+dcant$base_mod[dcant$chimio=="AC"] <- 0
+dcant$base_mod[dcant$chimio=="NAC"] <- 1
+
+
+
+dcant$w <- dcant$base_mod/dcant$PRED + (1 - dcant$base_mod)/(1 - dcant$PRED)
+dcant$wt = pmin(dcant$w, quantile(dcant$w, 0.99))
+
+```
+
+
+
+### Population description
+
+
+```{r, echo = FALSE}
+
+
+var <- c("age", "age_young_cl_40_bin", "menop", 
+         "bmi", "bmi_4cl", "tclin", "tuicc_3cl", "nuicc_2cl", "breast_surgery_3cl","chimio")
+
+label_var <-c(age ~ "Age", age_young_cl_40_bin ~ "Age", menop ~ "Menopausal status", 
+               bmi ~ "BMI", bmi_4cl ~ "BMI", 
+              tclin ~ "Initial clinical tumor size", tuicc_3cl ~ "Initial clinical tumor size", 
+              nuicc_2cl ~ "Nodal status", breast_surgery_3cl ~ "Surgery")
+
+
+dcant %>% select(all_of(var)) %>% 
+  tbl_summary(by = chimio ,label = label_var,missing_text = "(Missing)") %>%
+  bold_labels() %>% 
+  modify_header(label ~ "**Variable**") %>%
+  #modify_spanning_header(c("stat_1", "stat_2", "stat_3") ~ "**Molecular subtypes**") %>% 
+  add_overall() %>% 
+  add_p()
+
+
+dcant <- as.data.frame(dcant)
+
+
+```
+
+
+### Analysis before PS
+
+Pre PS analysis are available [here](Lum-B-before-PS-cohort-3.html)
+
+### Analysis after PS
+
+#### Kaplan Meier curves
+
+As it is a weighted population, risk table are not displayed. 
+
+P-value is obtained with a weighted Cox model.
+
+```{r KM OS pondéré cohort 3, fig.width=7,fig.height=7,autodep=FALSE}
+
+#source("univarieSP.R")
+fit_os               <- survfit(Surv(delay_os_tg, status_vital_tg)	~chimio,  data = dcant, weights = wt)
+palette_jco  <- c(pal_jco("default")(10))
+
+
+p_os <- ggsurvplot(fit_os,data=dcant, 
+                               palette = palette_jco[1:2],
+                              pval = FALSE,
+                              # legend = c(0.6, 0.25), 
+                              xlim=c(0,100),
+                              legend.title = "CT strategy", 
+                              legend.labs = levels(dcant$chimio) ,
+                              legend = c(0.2, 0.20) ,
+                              pval.coord = c(60,0.15),
+                              pval.size = 4, 
+                             
+                              risk.table = FALSE , 
+                              risk.table.fontsize = 4,
+                              risk.table.height = 0.3,
+                              tables.y.text=FALSE,
+                              font.legend = 10 , size = 0.8, censor=FALSE)
+    
+                              p_os$plot <- p_os$plot + theme(plot.title = element_text(hjust = 0.5))+ ylab("Overall survival")
+                              p_os$plot <- p_os$plot + annotate ("text", x=40, y=0.01, size = 4.5, 
+                                                      label ="HR = 3.46 [1.11 – 10.8]; p = 0.032")
+                              
+					
+#p_os
+```
+
+
+```{r KM DFS pondere cohort 3, fig.width=7,fig.height=7,autodep=FALSE}
+
+fit_dfs               <- survfit(Surv(delay_rfs_tg, status_rfs_tg)	~ chimio ,  data = dcant, weights = wt)
+palette_jco  <- c(pal_jco("default")(10))
+
+
+p_dfs<- ggsurvplot(fit_dfs,data=dcant, 
+                               palette = palette_jco[1:2],
+                              pval = FALSE,
+                              # legend = c(0.6, 0.25), 
+                              xlim=c(0,60),
+                              legend.title = "CT strategy", 
+                              legend.labs = levels(dcant$chimio) ,
+                              legend = c(0.2, 0.20) ,
+                              pval.coord = c(60,0.15),
+                              pval.size = 4, 
+                             
+                              risk.table = F , 
+                              #risk.table.fontsize = 4,risk.table.height = 0.3,
+                              #tables.y.text=FALSE,
+                              font.legend = 10 , size = 0.8, censor=FALSE)
+    
+                              p_dfs$plot <- p_dfs$plot + theme(plot.title = element_text(hjust = 0.5))+ ylab("Disease-free survival")
+                              p_dfs$plot <- p_dfs$plot + annotate ("text", x=40, y=0.01, size = 5, 
+                            label ="HR = 1.49 [1.02 – 2.17]; p = 0.037")
+                             # p_dfs$table <-p_dfs$table +  theme(plot.title = element_text(size = 10)) 
+                              
+                               #p_dfs$table[["theme"]][["axis.line"]][["colour"]]     <- "white"
+                               #p_dfs$table[["theme"]][["axis.ticks"]][["colour"]]    <- "white"
+                               #p_dfs$table[["theme"]][["axis.text.x"]][["colour"]]   <- "white"
+ #                              p_dfs$table[["labels"]][["y"]]                        <- " "
+  #                             p_dfs$table[["labels"]][["x"]]                        <- " "
+   #                            p_dfs$table[["labels"]][["title"]]                    <- "N at risk"
+                              #       }
+					
+#p_dfs
+```
+
+
+```{r KM DRFS pondere cohort 3, fig.width=7,fig.height=7,autodep=FALSE}
+
+fit_drfs               <- survfit(Surv(delay_drfs_tg, status_drfs_tg)	~ chimio ,  data = dcant, weights = wt)
+palette_jco  <- c(pal_jco("default")(10))
+
+
+p_drfs<- ggsurvplot(fit_dfs,data=dcant, 
+                               palette = palette_jco[1:2],
+                              pval = FALSE,
+                              # legend = c(0.6, 0.25), 
+                              xlim=c(0,60),
+                              legend.title = "CT strategy", 
+                              legend.labs = levels(dcant$chimio) ,
+                              legend = c(0.2, 0.20) ,
+                              pval.coord = c(60,0.15),
+                              pval.size = 4, 
+                             
+                              risk.table = F , 
+                              #risk.table.fontsize = 4,risk.table.height = 0.3,
+                              #tables.y.text=FALSE,
+                              font.legend = 10 , size = 0.8, censor=FALSE)
+    
+                              p_drfs$plot <- p_drfs$plot + theme(plot.title = element_text(hjust = 0.5))+
+                                ylab("Disease-free survival")
+                              p_drfs$plot <- p_drfs$plot + annotate ("text", x=40, y=0.01,
+                                                        label ="HR = 1.13, [0.74 – 1.75]; p = 0.6")
+                             # p_dfs$table <-p_dfs$table +  theme(plot.title = element_text(size = 10)) 
+                              
+                               #p_dfs$table[["theme"]][["axis.line"]][["colour"]]     <- "white"
+                               #p_dfs$table[["theme"]][["axis.ticks"]][["colour"]]    <- "white"
+                               #p_dfs$table[["theme"]][["axis.text.x"]][["colour"]]   <- "white"
+ #                              p_dfs$table[["labels"]][["y"]]                        <- " "
+  #                             p_dfs$table[["labels"]][["x"]]                        <- " "
+   #                            p_dfs$table[["labels"]][["title"]]                    <- "N at risk"
+                              #       }
+					
+#p_drfs
+```
+
+
+```{r KM pondere regroupe cohort 3, fig.height=6, fig.width=18}
+list_g <- list()
+list_g[[1]] <- p_dfs
+list_g[[3]] <- p_os
+list_g[[2]] <- p_drfs
+
+figKM <- arrange_ggsurvplots(list_g, print = TRUE,   ncol = 3, nrow = 1)
+figKM
+```
+
+
+The IPTW-adjusted RFS, was not significantly different in the NAC group compared to the AC group in univariable analysis __(HR = 1.49, 95%IC [1.02 – 2.17]; p = 0.037)__.
+
+The IPTW-adjusted DRFS was significantly better in the NAC group __(HR = 1.13, 95%IC [0.74 – 1.75]; p = 0.6)__ in univariable analysis.
+
+The IPTW-adjusted OS was not significantly different in the NAC group __(HR = 3.46, 95%IC [1.11 – 10.8]; p = 0.032)__ in univariable analysis.
+
+
+
+
+#### Cox multivariable regression model
+
+We performed multivariable cox regression model with adjustment on the type of surgery performed.
+
+
+##### **RFS**
+
+The IPTW-adjusted RFS was significantly lower in the NAC group compared to the AC group in multivariable analysis __(HR = 1.69, 95%IC [1.15 – 2.48]; p = 0.008)__. The performance of a radical mastectomy was associated with lower RFS either.
+
+
+
+```{r}
+survuni_dfs <- coxph (Surv(delay_rfs_tg, status_rfs_tg)	~ chimio + breast_surgery_3cl ,  data = dcant, method="breslow", weights = wt, robust = F)
+uni_dfs <- cox_summary(survuni_dfs)
+
+survuni_dfs %>%  tbl_regression(label = list(chimio~"Chemotherapy", breast_surgery_3cl~"Surgery"), exp = TRUE, add_estimate_to_reference_rows = TRUE) %>% bold_labels() 
+```
+\  
+
+
+
+##### **DRFS**
+
+The IPTW-adjusted DRFS was not significantly different in the NAC group compared to the AC group in multivariable analysis __(HR = 1.32, 95%IC [0.85 – 2.07]; p = 0.2)__. The performance of a radical mastectomy was associated with lower DRFS.
+
+
+```{r}
+survuni_drfs <- coxph (Surv(delay_drfs_tg, status_drfs_tg)	~ chimio + breast_surgery_3cl,  data = dcant, method="breslow", weights = wt, robust = F)
+uni_drfs <- cox_summary(survuni_drfs)
+
+survuni_drfs %>% tbl_regression(label = list(chimio~"Chemotherapy", breast_surgery_3cl~"Surgery"), exp = TRUE, add_estimate_to_reference_rows = TRUE) %>% bold_labels() 
+```
+\  
+
+##### **OS**
+
+
+The IPTW-adjusted OS was significantly lower in the NAC group __(HR = 3.28, 95%IC [1.03 – 10.5]; p = 0.2)__ after adjustement on the type of surgery performed.The performance of a radical mastectomy was not associated with a different OS.
+
+
+
+```{r cox uni OS}
+survuni_os <- coxph (Surv(delay_os_tg, status_vital_tg)	~ chimio + breast_surgery_3cl,  data = dcant, method="breslow", weights = wt, robust = F)
+uni_os <- cox_summary(survuni_os)
+
+survuni_os %>% tbl_regression(label = list(chimio~"Chemotherapy", breast_surgery_3cl~"Surgery"), exp = TRUE, add_estimate_to_reference_rows = TRUE) %>% bold_labels() 
+```
+\  
+
+
+
+#### Forest plot
+
+```{r  formule forest plot cohort3,  fig.width=10,fig.height=8}
+forest_plot_cox <- function(y, var, pretty_y,delay, status, data,multi, wt){
+  
+  if(missing(multi)) {
+    f<-as.formula(paste("Surv(",delay,",",status, ")", "~",y,":",var,"+", y))
+
+  } else {
+    f<-as.formula(paste("Surv(",delay,",",status, ")", "~",y,":",var,"+", y, "+", multi))
+  }
+  
+  #f<-as.formula(paste("Surv(",delay,",",status, ")", "~",y,":",var,"+", y))
+  mod <- coxph(f,  weight = wt, robust=F,data = data)
+  uni <- cox_summary(mod)
+  
+  fp<-as.formula(paste("Surv(",delay,",",status, ")", "~",y,"*",var))
+  mod2 <- coxph(fp,  weight = wt, robust=F,data = data)
+  pval <- car::Anova(mod2, test.statistic="Wald")$`Pr(>Chisq)`
+  
+  nmax <- length(levels(data[,y]))
+  #nmin <- length(levels(data[,var]))
+  nmin<- ifelse(length(levels(data[,var]))==0, 1,length(levels(data[,var])))
+  #nch <- (nmax*nmin)-nmax
+  nch <- ifelse(is.numeric(data[,var]),nmax,(nmax*nmin)-nmax )
+  
+  HR_plot  = round(tail(uni$exp.coef.,nch),2)
+  lower_plot = round(tail(uni$IC_inf.,nch),2)
+  upper_plot = round(tail(uni$IC_sup.,nch),2)
+  p_plot = round(tail(uni$P_value,nch),2)
+  
+  HR_lab <- as.character(HR_plot)
+  lower_lab <- as.character(lower_plot)
+  upper_lab <- as.character(upper_plot)
+  p_lab <- as.character(p_plot)
+  
+  inter_plot_quali<-
+    data.frame(
+      HR  = c(NA,NA,HR_plot),
+      lower = c( NA,NA,lower_plot),
+      upper = c(NA, NA,upper_plot), 
+      p = c( NA,NA,p_plot))
+  
+  # label <- cbind(c(y, levels(d[y])),
+  #                c("HR", HR_lab),
+  #                c("IC-Low", lower_lab),
+  #                c("IC-High",upper_lab),
+  #                c("p-value" ,p_lab))
+  
+  # dim_var <- ifelse(length(levels(data[,var]))==0, 1,length(levels(data[,var])))
+  #   dim_y <- length(levels(data[,y]))
+  nb <- ifelse (nmin ==1, 2, nmin)
+  N <- list()
+  for (i in 2:nb) {
+    N[[i]] <- c(levels(data[,var])[i], rep(NA, nmax-1))
+    
+  }
+  
+  nmin_mod <- ifelse(nmin == 1, 1, nmin-1)
+  deter <- ifelse(nmin == 1, 1, 2)
+  
+  pval_final <- tail(round(pval, 2),1)
+  pval_final2 <- ifelse(pval_final>0.01, pval_final, "p<0.01")
+  
+  label <- cbind(c(rep(NA, deter),unlist(N)),
+                 c(NA,pretty_y, rep(levels(data[,y]),nmin_mod)),
+                 c(NA,NA, HR_lab),
+                 c(NA,NA, paste("95%CI [",lower_lab,"-")),
+                 c(NA,NA,paste(upper_lab,"]")),
+                 c( NA,pval_final2,rep(NA, nch)))
+  
+  
+  tibble(number = inter_plot_quali, label = label)
+  
+}
+
+  
+poss_inter_cox_fp = possibly(.f = forest_plot_cox, otherwise = NULL)
+```
+
+
+##### **RFS**
+
+After univariable analysis, age was associated with a different impact of the chemotherapy strategy on DFS (Pinteraction < 0.01). 
+
+```{r FP RFS uni cohort 3 , echo=FALSE, fig.height=8, fig.width=10}
+
+var_y <- c("age_young_cl_40_bin", "bmi_4cl", "menop","tuicc_3cl", "nuicc_2cl")
+
+pretty_var_y <- c("Age", "BMI", "Menopausal status", "cT","cN")
+
+tab_inter <- tibble(var_y, pretty_var_y) 
+
+try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+  poss_inter_cox_fp(
+  delay = "delay_rfs_tg",
+  status = "status_rfs_tg",
+  y = x,
+  var = "chimio",
+  pretty_y = y,
+  wt = wt,
+  data = dcant)))
+
+
+tablo_fp <- do.call(rbind,try$forest)
+
+tablo_fp$label [1,3]<-"HR"
+tablo_fp$label [1,4]<-"IC low"
+tablo_fp$label [1,5]<-"IC high"
+tablo_fp$label [1,6]<-"p-value"
+
+
+
+tablo_def_hr <-
+  tablo_fp %>% filter(is.na(number$HR) |
+                        number$HR < 10 &
+                        number$HR > 0 &
+                        number$upper < 40 &
+                        number$lower > 0) %>% 
+  group_by(label[, 1]) %>% 
+  rowid_to_column(.) %>% 
+  mutate(num_fig = ceiling(rowid/40))
+
+
+forestplot(
+    labeltext = tablo_def_hr$label[,2:6],
+    tablo_def_hr$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),
+    xlab = "<==== NAC better     |   AC better ====>",
+    xlog = TRUE,
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    line.margin = unit(2, "mm"),
+    lty.zero =  "dashed",
+    boxsize = 0.35,
+    graphwidth = unit(70, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="B - Forest Plot - Hazard Ratio RFS (univariable analysis)",
+        #par(oma=c(10,1,1)),
+        hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=110,  lineend="butt", col="#99999922"),
+                           "14" = gpar(lwd=100, lineend="butt",  col="#99999922"),
+                          "22" = gpar(lwd=100, lineend="butt",  col="#99999922"))
+                       
+  )
+
+```
+
+
+Patient with T3-T4 initial tumor size benefited from the NAC strategy in univariable analysis when patient with T2 initial tumor size benefited from the AC strategy.
+
+Similarly, patient with initial negative node status benefited from the AC strategy.
+
+No difference between strategies was seen for other subgroups.
+
+```{r FP RFS multi cohort 3, echo=FALSE, fig.height=8, fig.width=10}
+
+var_y <- c("age_young_cl_40_bin", "bmi_4cl", "menop","tuicc_3cl", "nuicc_2cl")
+
+pretty_var_y <- c("Age", "BMI", "Menopausal status", "cT","cN")
+
+tab_inter <- tibble(var_y, pretty_var_y) 
+
+try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+  poss_inter_cox_fp(
+  delay = "delay_rfs_tg",
+  status = "status_rfs_tg",
+  y = x,
+  var = "chimio",
+  pretty_y = y,
+  multi = "breast_surgery_3cl",
+  wt = wt,
+  data = dcant)))
+
+
+tablo_fp <- do.call(rbind,try$forest)
+
+tablo_fp$label [1,3]<-"HR"
+tablo_fp$label [1,4]<-"IC low"
+tablo_fp$label [1,5]<-"IC high"
+tablo_fp$label [1,6]<-"p-value"
+
+
+
+tablo_def_hr <-
+  tablo_fp %>% filter(is.na(number$HR) |
+                        number$HR < 10 &
+                        number$HR > 0 &
+                        number$upper < 40 &
+                        number$lower > 0) %>% 
+  group_by(label[, 1]) %>% 
+  rowid_to_column(.) %>% 
+  mutate(num_fig = ceiling(rowid/40))
+
+
+forestplot(
+    labeltext = tablo_def_hr$label[,2:6],
+    tablo_def_hr$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),
+    xlab = "<==== NAC better     |   AC better ====>",
+    xlog = TRUE,
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    line.margin = unit(2, "mm"),
+    lty.zero =  "dashed",
+    boxsize = 0.35,
+    graphwidth = unit(70, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="B - Forest Plot - Hazard Ratio RFS (Multivariable analysis)",
+        #par(oma=c(10,1,1)),
+       hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=110,  lineend="butt", col="#99999922"),
+                           "14" = gpar(lwd=100, lineend="butt",  col="#99999922"),
+                          "22" = gpar(lwd=100, lineend="butt",  col="#99999922"))
+  )
+
+```
+
+After adjustement on surgical procedure, in patients older than 40, the AC strategy was associated with a RFS benefit __(HR 1.71, 95%CI [1.08-2.71])__, over the NAC strategy. 
+
+Similarly, patient with initial T2 tumor benefited from the AC strategy over the NAC strategy in multivariable analysis __(HR 2.39, 95%CI [1.53-3.73])__. 
+Patients with initial negative node status benefited from the AC strategy __(HR 1.95, 95%CI [1.17-3.22])__.
+
+No difference between strategies was seen for other subgroups.
+
+
+##### **DRFS**
+
+After univariable analysis, initial tumor size was associated with a different impact of the chemotherapy strategy on DRFS (Pinteraction < 0.01). 
+
+```{r forest plot uni DRFS cohort 3, echo=FALSE, fig.height=8, fig.width=10}
+
+#
+var_y <- c("age_young_cl_40_bin", "bmi_4cl", "menop", "tuicc_3cl", "nuicc_2cl")
+
+pretty_var_y <- c("Age", "BMI", "Menopausal status", "cT","cN")
+
+tab_inter <- tibble(var_y, pretty_var_y) 
+
+try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+  poss_inter_cox_fp(
+  delay = "delay_drfs_tg",
+  status = "status_drfs_tg",
+  y = x,
+  var = "chimio",
+  wt = wt,
+  pretty_y = y,
+  data = dcant)))
+
+
+tablo_fp <- do.call(rbind,try$forest)
+
+tablo_fp$label [1,3]<-"HR"
+tablo_fp$label [1,4]<-"IC low"
+tablo_fp$label [1,5]<-"IC high"
+tablo_fp$label [1,6]<-"p-value"
+
+
+
+tablo_def_hr <-
+  tablo_fp %>% filter(is.na(number$HR) |
+                        number$HR < 10 &
+                        number$HR > 0 &
+                        number$upper < 40 &
+                        number$lower > 0) %>% 
+  group_by(label[, 1]) %>% 
+  rowid_to_column(.) %>% 
+  mutate(num_fig = ceiling(rowid/40))
+
+
+forestplot(
+    labeltext = tablo_def_hr$label[,2:6],
+    tablo_def_hr$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),
+    xlab = "<==== NAC better     |   AC better ====>",
+    xlog = TRUE,
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    line.margin = unit(2, "mm"),
+    lty.zero =  "dashed",
+    boxsize = 0.35,
+    graphwidth = unit(70, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="C - Forest Plot - Hazard Ratio DRFS (Univariable analysis)",
+        #par(oma=c(10,1,1)),
+         hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=110,  lineend="butt", col="#99999922"),
+                           "14" = gpar(lwd=100, lineend="butt",  col="#99999922"),
+                          "22" = gpar(lwd=100, lineend="butt",  col="#99999922"))
+          
+  )
+
+```
+
+
+```{r forest plot multi DRFS cohort 3, echo=FALSE, fig.height=8, fig.width=10}
+
+#
+var_y <- c("age_young_cl_40_bin", "bmi_4cl", "menop", "tuicc_3cl", "nuicc_2cl")
+
+pretty_var_y <- c("Age", "BMI", "Menopausal status", "cT","cN")
+
+tab_inter <- tibble(var_y, pretty_var_y) 
+
+try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+  poss_inter_cox_fp(
+  delay = "delay_drfs_tg",
+  status = "status_drfs_tg",
+  y = x,
+  var = "chimio",
+   multi = "breast_surgery_3cl",
+  wt = wt,
+  pretty_y = y,
+  data = dcant)))
+
+
+tablo_fp <- do.call(rbind,try$forest)
+
+tablo_fp$label [1,3]<-"HR"
+tablo_fp$label [1,4]<-"IC low"
+tablo_fp$label [1,5]<-"IC high"
+tablo_fp$label [1,6]<-"p-value"
+
+
+
+tablo_def_hr <-
+  tablo_fp %>% filter(is.na(number$HR) |
+                        number$HR < 10 &
+                        number$HR > 0 &
+                        number$upper < 40 &
+                        number$lower > 0) %>% 
+  group_by(label[, 1]) %>% 
+  rowid_to_column(.) %>% 
+  mutate(num_fig = ceiling(rowid/40))
+
+
+forestplot(
+    labeltext = tablo_def_hr$label[,2:6],
+    tablo_def_hr$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),
+    xlab = "<==== NAC better     |   AC better ====>",
+    xlog = TRUE,
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    line.margin = unit(2, "mm"),
+    lty.zero =  "dashed",
+    boxsize = 0.35,
+    graphwidth = unit(70, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="C - Forest Plot - Hazard Ratio DRFS (Multivariable analysis)",
+        #par(oma=c(10,1,1)),
+         hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=110,  lineend="butt", col="#99999922"),
+                           "14" = gpar(lwd=100, lineend="butt",  col="#99999922"),
+                          "22" = gpar(lwd=100, lineend="butt",  col="#99999922"))
+          
+  )
+
+```
+Patient with initial T2 tumor benefited from the AC strategy __(HR 1.67, 95%CI [1-2.78])__ while patient with T3-4 tumors benfited from the  NAC strategy __(HR 0.34, 95%CI [0.12-0.97])__ in univariable analysis in DRFS.
+
+No difference between strategies was seen for other subgroups.
+
+
+##### **OS**
+
+The number of deaths does not allow for relevant subgroup analyses.
+
+```{r FP uni OS cohort 3,echo=FALSE,fig.height=8, fig.width=10}
+
+
+# var_y <- c("age_young_cl_40_bin", "tuicc_3cl", "nuicc_2cl")
+# 
+# pretty_var_y <- c("Age", "cT", "cN")
+# 
+# tab_inter <- tibble(var_y, pretty_var_y) 
+# 
+# try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+#   poss_inter_cox_fp(
+#   delay = "delay_os_tg",
+#   status = "status_vital_tg",
+#   y = x,
+#   var = "chimio",
+#   pretty_y = y,
+#   wt = wt,
+#   data = dcant)))
+# 
+# 
+# tablo_fp <- do.call(rbind,try$forest)
+# 
+# tablo_fp$label [1,3]<-"HR"
+# tablo_fp$label [1,4]<-"IC low"
+# tablo_fp$label [1,5]<-"IC high"
+# tablo_fp$label [1,6]<-"p-value"
+# 
+# 
+# 
+# tablo_def_hr <-
+#   tablo_fp %>% filter(is.na(number$HR) |
+#                         number$HR < 10 &
+#                         number$HR > 0 &
+#                         number$upper < 40 &
+#                         number$lower > 0) %>% 
+#   group_by(label[, 1]) %>% 
+#   rowid_to_column(.) %>% 
+#   mutate(num_fig = ceiling(rowid/40))
+# 
+# 
+# forestplot(
+#     labeltext = tablo_def_hr$label[,2:6],
+#     tablo_def_hr$number[, 1:3],
+#     graph.pos = 5,
+#     clip = c(0.2, 4),
+#     xlog = TRUE,
+#     col = fpColors(box = "black", lines = "black", zero = "gray"),
+#     txt_gp = fpTxtGp(
+#       label = gpar(cex = 1),
+#       ticks = gpar(cex = 1.1),
+#       xlab = gpar(cex = 1, coord = -100),
+#       title = gpar(cex = 1.2)
+#     ),
+#     line.margin = unit(2, "mm"),
+#     lty.zero =  "dashed",
+#     boxsize = 0.35,
+#     graphwidth = unit(70, "mm"),
+#     lwd.ci = 1.5,
+#     ci.vertices = TRUE,
+#     ci.vertices.height = 0.1,
+#     lineheight = "auto",
+#     cex = 0.9,
+#      title="A - Forest Plot - Hazard Ratio OS (univariable analysis)",
+#         #par(oma=c(10,1,1)),
+#            hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+#                           "5" = gpar(lwd=120,  lineend="butt", col="#99999922"))
+#                           # "9" = gpar(lwd=180, lineend="butt",  col="#99999922"),
+#                          # "13" = gpar(lwd=120, lineend="butt",  col="#99999922"))
+#  )
+
+```
+
+
+```{r FP OS multi cohort 3,fig.height=8, fig.width=10}
+
+# var_y <- c("age_young_cl_40_bin", "tuicc_3cl", "nuicc_2cl")
+# 
+# pretty_var_y <- c("Age", "cT", "cN")
+# 
+# tab_inter <- tibble(var_y, pretty_var_y) 
+# 
+# try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+#   poss_inter_cox_fp(
+#   delay = "delay_os_tg",
+#   status = "status_vital_tg",
+#   y = x,
+#   var = "chimio",
+#   pretty_y = y,
+#   wt = wt,
+#   multi = "breast_surgery_3cl",
+#   data = dcant)))
+# 
+# 
+# tablo_fp <- do.call(rbind,try$forest)
+# 
+# tablo_fp$label [1,3]<-"HR"
+# tablo_fp$label [1,4]<-"IC low"
+# tablo_fp$label [1,5]<-"IC high"
+# tablo_fp$label [1,6]<-"p-value"
+# 
+# 
+# 
+# tablo_def_hr <-
+#   tablo_fp %>% filter(is.na(number$HR) |
+#                         number$HR < 10 &
+#                         number$HR > 0 &
+#                         number$upper < 40 &
+#                         number$lower > 0) %>% 
+#   group_by(label[, 1]) %>% 
+#   rowid_to_column(.) %>% 
+#   mutate(num_fig = ceiling(rowid/40))
+# 
+# 
+# forestplot(
+#     labeltext = tablo_def_hr$label[,2:6],
+#     tablo_def_hr$number[, 1:3],
+#     graph.pos = 5,
+#     clip = c(0.2, 4),
+#     xlog = TRUE,
+#     col = fpColors(box = "black", lines = "black", zero = "gray"),
+#     txt_gp = fpTxtGp(
+#       label = gpar(cex = 1),
+#       ticks = gpar(cex = 1.1),
+#       xlab = gpar(cex = 1, coord = -100),
+#       title = gpar(cex = 1.2)
+#     ),
+#     line.margin = unit(2, "mm"),
+#     lty.zero =  "dashed",
+#     boxsize = 0.35,
+#     graphwidth = unit(70, "mm"),
+#     lwd.ci = 1.5,
+#     ci.vertices = TRUE,
+#     ci.vertices.height = 0.1,
+#     lineheight = "auto",
+#     cex = 0.9,
+#      title="A - Forest Plot - Hazard Ratio OS (Multivariable analysis)",
+#         #par(oma=c(10,1,1)),
+#            hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+#                           "5" = gpar(lwd=120,  lineend="butt", col="#99999922"))
+#                           # "9" = gpar(lwd=180, lineend="butt",  col="#99999922"),
+#                          # "13" = gpar(lwd=120, lineend="butt",  col="#99999922"))
+#   )
+
+```
+
+
+## Canto subgroup analysis : Premenopausal patient
+
+We performed similar analysis with a population of premenopausal patient from the canto cohort.
+
+The number of deaths does not allow for relevant analyses in this cohort.
+
+```{r}
+#djeun <- subset(dcant, dcant$age < 50)
+djeun <- subset(dcant, dcant$menop == "Premenopausal")
+```
+
+
+```{r}
+# 
+# multi <- glm (chimio~age+ bmi +tclin+nuicc_2cl , data=djeun, family=binomial)
+# library(MASS)
+# stepAIC(multi,direction = "backward")
+
+
+
+multi <- glm (chimio~ age+tclin+ggl , data=djeun, family=binomial)
+
+set.seed(1703)
+PRED <- multi$fitted.values
+djeun$PRED <- PRED
+
+```
+
+
+```{r variables utiles et figure de SP jeunes}
+
+djeun$base_mod <-NA
+djeun$base_mod[djeun$chimio=="AC"] <- 0
+djeun$base_mod[djeun$chimio=="NAC"] <- 1
+
+
+
+djeun$w <- djeun$base_mod/djeun$PRED + (1 - djeun$base_mod)/(1 - djeun$PRED)
+djeun$wt = pmin(djeun$w, quantile(djeun$w, 0.99))
+
+
+
+plot_SP <-ggplot(dcant, aes(x = PRED, fill = chimio)) + geom_density(alpha = 0.5) +theme (legend.title= element_blank())  +  guides(colour=FALSE) + scale_fill_jco() + xlab("Propensity score") +ylab("")
+```
+
+
+#### Kaplan Meier curves
+
+As it is a weighted population, risk table are not displayed. 
+
+P-value is obtained with a weighted Cox model.
+
+```{r KM OS pondéré jeun cohort 3, fig.width=7,fig.height=7,autodep=FALSE}
+
+#source("univarieSP.R")
+fit_os               <- survfit(Surv(delay_os_tg, status_vital_tg)	~chimio,  data = djeun, weights = wt)
+palette_jco  <- c(pal_jco("default")(10))
+
+
+p_os <- ggsurvplot(fit_os,data=djeun, 
+                               palette = palette_jco[1:2],
+                              pval = FALSE,
+                              # legend = c(0.6, 0.25), 
+                              xlim=c(0,100),
+                              legend.title = "CT strategy", 
+                              legend.labs = levels(djeun$chimio) ,
+                              legend = c(0.2, 0.20) ,
+                              pval.coord = c(60,0.15),
+                              pval.size = 4, 
+                             
+                              risk.table = FALSE , 
+                              risk.table.fontsize = 4,
+                              risk.table.height = 0.3,
+                              tables.y.text=FALSE,
+                              font.legend = 10 , size = 0.8, censor=FALSE)
+    
+                              p_os$plot <- p_os$plot + theme(plot.title = element_text(hjust = 0.5))+ ylab("Overall survival")
+                              p_os$plot <- p_os$plot + annotate ("text", x=40, y=0.01, size = 5, 
+                                                                 label ="HR = 3.46, 95%IC [1.11 – 10.8]; p = 0.032")
+                              
+					
+#p_os
+```
+
+
+```{r KM DFS pondere jeun cohort 3, fig.width=7,fig.height=7,autodep=FALSE}
+
+fit_dfs               <- survfit(Surv(delay_rfs_tg, status_rfs_tg)	~ chimio ,  data = djeun, weights = wt)
+palette_jco  <- c(pal_jco("default")(10))
+
+
+p_dfs<- ggsurvplot(fit_dfs,data=djeun, 
+                               palette = palette_jco[1:2],
+                              pval = FALSE,
+                              # legend = c(0.6, 0.25), 
+                              xlim=c(0,60),
+                              legend.title = "CT strategy", 
+                              legend.labs = levels(djeun$chimio) ,
+                              legend = c(0.2, 0.20) ,
+                              pval.coord = c(60,0.15),
+                              pval.size = 4, 
+                             
+                              risk.table = F , 
+                              #risk.table.fontsize = 4,risk.table.height = 0.3,
+                              #tables.y.text=FALSE,
+                              font.legend = 10 , size = 0.8, censor=FALSE)
+    
+                              p_dfs$plot <- p_dfs$plot + theme(plot.title = element_text(hjust = 0.5))+ ylab("Disease-free survival")
+                              p_dfs$plot <- p_dfs$plot + annotate ("text", x=40, y=0.01, size = 4.5, 
+                            label ="HR = 1.33, 95%IC [0.82 – 2.16]; p = 0.25")
+                            
+#p_dfs
+```
+
+
+```{r KM DRFS pondere jeune cohort 3, fig.width=7,fig.height=7,autodep=FALSE}
+
+fit_drfs               <- survfit(Surv(delay_drfs_tg, status_drfs_tg)	~ chimio ,  data = djeun, weights = wt)
+palette_jco  <- c(pal_jco("default")(10))
+
+
+p_drfs<- ggsurvplot(fit_dfs,data=djeun, 
+                               palette = palette_jco[1:2],
+                              pval = FALSE,
+                              # legend = c(0.6, 0.25), 
+                              xlim=c(0,60),
+                              legend.title = "CT strategy", 
+                              legend.labs = levels(djeun$chimio) ,
+                              legend = c(0.2, 0.20) ,
+                              pval.coord = c(60,0.15),
+                              pval.size = 4, 
+                             
+                              risk.table = F , 
+                              #risk.table.fontsize = 4,risk.table.height = 0.3,
+                              #tables.y.text=FALSE,
+                              font.legend = 10 , size = 0.8, censor=FALSE)
+    
+                              p_drfs$plot <- p_drfs$plot + theme(plot.title = element_text(hjust = 0.5))+ ylab("Disease-free survival")
+                              p_drfs$plot <- p_drfs$plot + annotate ("text", x=40, y=0.01,label ="HR = 0.91, 95%IC [0.52 – 1.57]; p = 0.73")
+
+
+#p_drfs
+```
+
+
+```{r KM pondere regroupe jeune cohort 3, fig.height=6, fig.width=12}
+list_g <- list()
+list_g[[1]] <- p_dfs
+#list_g[[3]] <- p_os
+list_g[[2]] <- p_drfs
+
+figKM <- arrange_ggsurvplots(list_g, print = TRUE,   ncol = 2, nrow = 1)
+figKM
+```
+
+
+The IPTW-adjusted RFS, was not significantly different in the NAC group compared to the AC group in univariable analysis __(HR = 1.33, 95%IC [0.82 – 2.16]; p = 0.25)__.
+
+The IPTW-adjusted DRFS was not significantly different in the NAC group __(HR = 0.91, 95%IC [0.52 – 1.57]; p = 0.73)__ in univariable analysis.
+
+
+
+#### Cox multivariable regression model
+
+We performed multivariable cox regression model with adjustment on the type of surgery performed.
+
+
+##### **RFS**
+
+
+The IPTW-adjusted RFS was significantly lower in the NAC group compared to the AC group in multivariable analysis __(HR = 1.71, 95%IC [1.02 – 2.87]; p = 0.044)__. The performance of a radical mastectomy was associated with lower RFS either.
+
+
+```{r}
+survuni_dfs <- coxph (Surv(delay_rfs_tg, status_rfs_tg)	~ chimio + breast_surgery_3cl ,  data = djeun, method="breslow", weights = wt, robust = F)
+uni_dfs <- cox_summary(survuni_dfs)
+
+survuni_dfs %>%  tbl_regression(label = list(chimio~"Chemotherapy" , breast_surgery_3cl~"Surgery"), exp = TRUE, add_estimate_to_reference_rows = TRUE) %>% bold_labels() 
+```
+
+\  
+
+
+
+##### **DRFS**
+
+The IPTW-adjusted DRFS was not significantly different in the NAC group compared to the AC group in multivariable analysis __(HR = 1.29, 95%IC [0.72 – 2.31]; p = 0.4)__. The performance of a radical mastectomy was associated with lower DRFS.
+
+
+
+```{r}
+survuni_drfs <- coxph (Surv(delay_drfs_tg, status_drfs_tg)	~ chimio + breast_surgery_3cl,  data = djeun, method="breslow", weights = wt, robust = F)
+uni_drfs <- cox_summary(survuni_drfs)
+
+survuni_drfs %>% tbl_regression(label = list(chimio~"Chemotherapy", breast_surgery_3cl~"Surgery"), exp = TRUE, add_estimate_to_reference_rows = TRUE) %>% bold_labels() 
+```
+
+\  
+
+
+
+#### Forest plot
+
+```{r  formule forest plot,  fig.width=10,fig.height=8}
+forest_plot_cox <- function(y, var, pretty_y,delay, status, data,multi, wt){
+  
+  if(missing(multi)) {
+    f<-as.formula(paste("Surv(",delay,",",status, ")", "~",y,":",var,"+", y))
+
+  } else {
+    f<-as.formula(paste("Surv(",delay,",",status, ")", "~",y,":",var,"+", y, "+", multi))
+  }
+  
+  #f<-as.formula(paste("Surv(",delay,",",status, ")", "~",y,":",var,"+", y))
+  mod <- coxph(f,  weight = wt, robust=F,data = data)
+  uni <- cox_summary(mod)
+  
+  fp<-as.formula(paste("Surv(",delay,",",status, ")", "~",y,"*",var))
+  mod2 <- coxph(fp,  weight = wt, robust=F,data = data)
+  pval <- car::Anova(mod2, test.statistic="Wald")$`Pr(>Chisq)`
+  
+  nmax <- length(levels(data[,y]))
+  #nmin <- length(levels(data[,var]))
+  nmin<- ifelse(length(levels(data[,var]))==0, 1,length(levels(data[,var])))
+  #nch <- (nmax*nmin)-nmax
+  nch <- ifelse(is.numeric(data[,var]),nmax,(nmax*nmin)-nmax )
+  
+  HR_plot  = round(tail(uni$exp.coef.,nch),2)
+  lower_plot = round(tail(uni$IC_inf.,nch),2)
+  upper_plot = round(tail(uni$IC_sup.,nch),2)
+  p_plot = round(tail(uni$P_value,nch),2)
+  
+  HR_lab <- as.character(HR_plot)
+  lower_lab <- as.character(lower_plot)
+  upper_lab <- as.character(upper_plot)
+  p_lab <- as.character(p_plot)
+  
+  inter_plot_quali<-
+    data.frame(
+      HR  = c(NA,NA,HR_plot),
+      lower = c( NA,NA,lower_plot),
+      upper = c(NA, NA,upper_plot), 
+      p = c( NA,NA,p_plot))
+  
+  # label <- cbind(c(y, levels(d[y])),
+  #                c("HR", HR_lab),
+  #                c("IC-Low", lower_lab),
+  #                c("IC-High",upper_lab),
+  #                c("p-value" ,p_lab))
+  
+  # dim_var <- ifelse(length(levels(data[,var]))==0, 1,length(levels(data[,var])))
+  #   dim_y <- length(levels(data[,y]))
+  nb <- ifelse (nmin ==1, 2, nmin)
+  N <- list()
+  for (i in 2:nb) {
+    N[[i]] <- c(levels(data[,var])[i], rep(NA, nmax-1))
+    
+  }
+  
+  nmin_mod <- ifelse(nmin == 1, 1, nmin-1)
+  deter <- ifelse(nmin == 1, 1, 2)
+  
+  pval_final <- tail(round(pval, 2),1)
+  pval_final2 <- ifelse(pval_final>0.01, pval_final, "p<0.01")
+  
+  label <- cbind(c(rep(NA, deter),unlist(N)),
+                 c(NA,pretty_y, rep(levels(data[,y]),nmin_mod)),
+                 c(NA,NA, HR_lab),
+                 c(NA,NA, paste("95%CI [",lower_lab,"-")),
+                 c(NA,NA,paste(upper_lab,"]")),
+                 c( NA,pval_final2,rep(NA, nch)))
+  
+  
+  tibble(number = inter_plot_quali, label = label)
+  
+}
+
+  
+poss_inter_cox_fp = possibly(.f = forest_plot_cox, otherwise = NULL)
+```
+
+##### **RFS**
+
+
+```{r RFS uni jeune, echo=FALSE, fig.height=8, fig.width=10}
+
+var_y <- c("age_young_cl_40_bin", "bmi_4cl", "tuicc_3cl", "nuicc_2cl")
+
+pretty_var_y <- c("Age","BMI", "cT","cN")
+
+tab_inter <- tibble(var_y, pretty_var_y) 
+
+try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+  poss_inter_cox_fp(
+  delay = "delay_rfs_tg",
+  status = "status_rfs_tg",
+  y = x,
+  var = "chimio",
+  pretty_y = y,
+  wt = wt,
+  data = djeun)))
+
+
+tablo_fp <- do.call(rbind,try$forest)
+
+tablo_fp$label [1,3]<-"HR"
+tablo_fp$label [1,4]<-"IC low"
+tablo_fp$label [1,5]<-"IC high"
+#$label [2,5]<-"better"
+tablo_fp$label [1,6]<-"p-value"
+
+
+
+tablo_def_hr <-
+  tablo_fp %>% filter(is.na(number$HR) |
+                        number$HR < 10 &
+                        number$HR > 0 &
+                        number$upper < 40 &
+                        number$lower > 0) %>% 
+  group_by(label[, 1]) %>% 
+  rowid_to_column(.) %>% 
+  mutate(num_fig = ceiling(rowid/40))
+
+
+fp <- forestplot(
+    labeltext = tablo_def_hr$label[,2:6],
+    tablo_def_hr$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),
+    xlog = TRUE,
+    xlab = "<==== NAC better     |   AC better ====>",
+   # legend = c("NAC better, AC better"),
+   #text(ilab.xpos[l], rows, parse(text = ilab[, l]), pos = ilab.pos[l],
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    line.margin = unit(2, "mm"),
+    lty.zero =  "dashed",
+    boxsize = 0.35,
+    graphwidth = unit(70, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="Young patient - Forest Plot - Hazard Ratio RFS (univariable analysis)",
+        #par(oma=c(10,1,1)),
+           hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=130,  lineend="butt", col="#99999922"),
+                           "13" = gpar(lwd=120, lineend="butt",  col="#99999922")
+                         # "23" = gpar(lwd=100, lineend="butt",  col="#99999922")
+                        )
+  )
+
+
+```
+
+
+Patient with T2 initial tumor size benefited from the AC strategy __(HR = 1.98, 95%IC [1.11 – 3.53])__.
+
+No difference between strategies was seen for other subgroups.
+
+```{r FP RFS multi jeune, echo=FALSE, fig.height=8, fig.width=10}
+#djeun$breast_surgery_3cl <- droplevels(djeun$breast_surgery_3cl)
+
+
+var_y <- c("age_young_cl_40_bin", "bmi_4cl", "tuicc_3cl", "nuicc_2cl")
+
+pretty_var_y <- c("Age", "BMI", "cT","cN")
+var_multi <- "breast_surgery_3cl"
+
+tab_inter <- tibble(var_y, pretty_var_y) 
+
+try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+  poss_inter_cox_fp(
+  delay = "delay_rfs_tg",
+  status = "status_rfs_tg",
+  y = x,
+  var = "chimio",
+  wt = wt, 
+  multi = var_multi, 
+  pretty_y = y,
+  data = djeun)))
+
+
+tablo_fp <- do.call(rbind,try$forest)
+
+tablo_fp$label [1,3]<-"HR"
+tablo_fp$label [1,4]<-"IC low"
+tablo_fp$label [1,5]<-"IC high"
+#$label [2,5]<-"better"
+tablo_fp$label [1,6]<-"p-value"
+
+
+
+tablo_def_hr <-
+  tablo_fp %>% filter(is.na(number$HR) |
+                        number$HR < 10 &
+                        number$HR > 0 &
+                        number$upper < 40 &
+                        number$lower > 0) %>% 
+  group_by(label[, 1]) %>% 
+  rowid_to_column(.) %>% 
+  mutate(num_fig = ceiling(rowid/40))
+
+
+fp <- forestplot(
+    labeltext = tablo_def_hr$label[,2:6],
+    tablo_def_hr$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),
+    xlog = TRUE,
+    xlab = "<==== NAC better     |   AC better ====>",
+   # legend = c("NAC better, AC better"),
+   #text(ilab.xpos[l], rows, parse(text = ilab[, l]), pos = ilab.pos[l],
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    line.margin = unit(2, "mm"),
+    lty.zero =  "dashed",
+    boxsize = 0.35,
+    graphwidth = unit(70, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="Young patient - Forest Plot - Hazard Ratio RFS (Multivariable analysis)",
+        #par(oma=c(10,1,1)),
+    hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=130,  lineend="butt", col="#99999922"),
+                           "13" = gpar(lwd=120, lineend="butt",  col="#99999922")
+                         # "23" = gpar(lwd=100, lineend="butt",  col="#99999922")
+                        )
+  )
+
+
+```
+
+After adjustement on surgical procedure, Patient with T2 initial tumor size benefited from the AC strategy __(HR = 2.37, 95%IC [1.3 – 4.3])__.
+
+Similarly, patient with initial negative node status benefited from the AC strategy __(HR 2.33, 95%CI [1.09-4.99])__.
+
+No difference between strategies was seen for other subgroups.
+
+
+##### **DRFS**
+
+```{r uni DFRS jeune, echo=FALSE, fig.height=8, fig.width=10}
+
+var_y <- c("age_young_cl_40_bin", "bmi_4cl", "tuicc_3cl", "nuicc_2cl")
+
+pretty_var_y <- c("Age", "BMI", "cT","cN")
+
+tab_inter <- tibble(var_y, pretty_var_y) 
+
+try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+  poss_inter_cox_fp(
+  delay = "delay_drfs_tg",
+  status = "status_drfs_tg",
+  y = x,
+  var = "chimio",
+  pretty_y = y,
+  wt = wt,
+  data = djeun)))
+
+
+tablo_fp <- do.call(rbind,try$forest)
+
+tablo_fp$label [1,3]<-"HR"
+tablo_fp$label [1,4]<-"IC low"
+tablo_fp$label [1,5]<-"IC high"
+#$label [2,5]<-"better"
+tablo_fp$label [1,6]<-"p-value"
+
+
+
+tablo_def_hr <-
+  tablo_fp %>% filter(is.na(number$HR) |
+                        number$HR < 10 &
+                        number$HR > 0 &
+                        number$upper < 40 &
+                        number$lower > 0) %>% 
+  group_by(label[, 1]) %>% 
+  rowid_to_column(.) %>% 
+  mutate(num_fig = ceiling(rowid/40))
+
+
+ forestplot(
+    labeltext = tablo_def_hr$label[,2:6],
+    tablo_def_hr$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),
+    xlog = TRUE,
+    xlab = "<==== NAC better     |   AC better ====>",
+   # legend = c("NAC better, AC better"),
+   #text(ilab.xpos[l], rows, parse(text = ilab[, l]), pos = ilab.pos[l],
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    line.margin = unit(2, "mm"),
+    lty.zero =  "dashed",
+    boxsize = 0.35,
+    graphwidth = unit(70, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="Young patient - Forest Plot - Hazard Ratio DRFS (univariable analysis)",
+        #par(oma=c(10,1,1)),
+          hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=130,  lineend="butt", col="#99999922"),
+                           "13" = gpar(lwd=120, lineend="butt",  col="#99999922")
+                         # "23" = gpar(lwd=100, lineend="butt",  col="#99999922")
+                        ))
+
+
+```
+
+
+
+No difference between strategies was seen for all the subgroups.
+
+
+```{r multi DFRS jeune, echo=FALSE, fig.height=8, fig.width=10}
+
+var_y <- c("age_young_cl_40_bin", "bmi_4cl", "tuicc_3cl", "nuicc_2cl")
+
+pretty_var_y <- c("Age", "BMI", "cT","cN")
+var_multi <- ("breast_surgery_3cl")
+tab_inter <- tibble(var_y, pretty_var_y) 
+
+try <- tab_inter  %>% mutate(forest =  map2(.x = var_y, .y = pretty_var_y, function(x, y)
+  poss_inter_cox_fp(
+  delay = "delay_drfs_tg",
+  status = "status_drfs_tg",
+  y = x,
+  var = "chimio",
+  wt = wt,
+  multi = var_multi,
+  pretty_y = y,
+  data = djeun)))
+
+
+tablo_fp <- do.call(rbind,try$forest)
+
+tablo_fp$label [1,3]<-"HR"
+tablo_fp$label [1,4]<-"IC low"
+tablo_fp$label [1,5]<-"IC high"
+#$label [2,5]<-"better"
+tablo_fp$label [1,6]<-"p-value"
+
+
+
+tablo_def_hr <-
+  tablo_fp %>% filter(is.na(number$HR) |
+                        number$HR < 10 &
+                        number$HR > 0 &
+                        number$upper < 40 &
+                        number$lower > 0) %>% 
+  group_by(label[, 1]) %>% 
+  rowid_to_column(.) %>% 
+  mutate(num_fig = ceiling(rowid/40))
+
+
+forestplot(
+    labeltext = tablo_def_hr$label[,2:6],
+    tablo_def_hr$number[, 1:3],
+    graph.pos = 5,
+    clip = c(0.2, 4),
+    xlog = TRUE,
+    xlab = "<==== NAC better     |   AC better ====>",
+   # legend = c("NAC better, AC better"),
+   #text(ilab.xpos[l], rows, parse(text = ilab[, l]), pos = ilab.pos[l],
+    col = fpColors(box = "black", lines = "black", zero = "gray"),
+    txt_gp = fpTxtGp(
+      label = gpar(cex = 1),
+      ticks = gpar(cex = 1.1),
+      xlab = gpar(cex = 1, coord = -100),
+      title = gpar(cex = 1.2)
+    ),
+    line.margin = unit(2, "mm"),
+    lty.zero =  "dashed",
+    boxsize = 0.35,
+    graphwidth = unit(70, "mm"),
+    lwd.ci = 1.5,
+    ci.vertices = TRUE,
+    ci.vertices.height = 0.1,
+    lineheight = "auto",
+    cex = 0.9,
+     title="Young patient - Forest Plot - Hazard Ratio DRFS (Multivariable analysis)",
+        #par(oma=c(10,1,1)),
+       hrzl_lines=list("2" = gpar(lwd=2, col="Gray"),
+                          "4" = gpar(lwd=130,  lineend="butt", col="#99999922"),
+                           "13" = gpar(lwd=120, lineend="butt",  col="#99999922")
+                         # "23" = gpar(lwd=100, lineend="butt",  col="#99999922")
+                        )
+  )
+
+
+```
+
+After adjustement on surgical procedure, there was no difference between both strategies.
+
+
+

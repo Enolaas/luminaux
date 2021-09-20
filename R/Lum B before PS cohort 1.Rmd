@@ -1,0 +1,328 @@
+---
+title: "Neoadjuvant vs. adivant chemotherapy in luminal B tumor-Before PS analysis Cohort 1"
+author: "T Gaillard,E LAAS"
+date: "18/05/2021"
+header-includes:
+- \usepackage{pdflscape}
+- \usepackage{booktabs}
+editor_options:
+  chunk_output_type: console
+output:
+  html_document:
+    fig_caption: yes
+    number_sections: yes
+    theme: cerulean
+    toc: yes
+    toc_float:
+      collapsed: no
+      smooth_scroll: no
+  pdf_document:
+    toc: yes
+  word_document:
+    toc: yes
+---
+
+```{r global_options, echo=FALSE}
+knitr::opts_chunk$set(fig.path='Figures articles lum b aout/', dev = 'pdf',
+ warning=FALSE, message=FALSE,  echo = FALSE, cache=F)
+#, cache=TRUE, autodep = TRUE
+```
+
+```{r}
+
+library(ggforce)
+library(patchwork)
+library(glue)
+library(knitr)
+library(magrittr)
+library(rms)
+library(RColorBrewer)
+library(scales)
+library(boot)
+library(MatchIt) 
+library(optmatch) 
+library (Matching)
+library (survminer)
+library(ggsci)
+library(ggpubr)
+library(cowplot)
+library(stddiff)
+library(cobalt)
+library(lubridate)
+
+
+PROJECT_PATH_FONCTION = "/Users/enoralaas/Dropbox/articles/Luminaux neoadj/Luminaux/Fonctions/"
+PROJECT_PATH_DATAS = "/Users/enoralaas/Dropbox/articles/Luminaux neoadj/Luminaux/data/"
+source(file.path(PROJECT_PATH_FONCTION, "mes_fonctions2.R"))
+source(file.path(PROJECT_PATH_FONCTION, "interaction.R"))
+
+
+library(tidyverse)
+
+```
+
+
+```{r cohort 1}
+load("d_imp4.RData") 
+
+d_impFR <- subset(d_imp, d_imp$taille_cl == ">20")
+d_impFR$BRCA_status <- NULL
+
+d_impFR <- subset(d_impFR, d_impFR$chirax!="No")
+d_impFR$chirax <- droplevels((d_impFR$chirax))
+d_impFR$Grade_mod <- as.factor(ifelse (d_impFR$Grade == "1" |d_impFR$Grade=="2", "1-2","3"))
+
+#on selectionne seulement les G3
+d_impFR <- subset(d_impFR, d_impFR$Grade_mod == "3")  
+#je supprime des patientes triples neg qui etaient passé à l'as
+d_impFR <- subset(d_impFR, d_impFR$ROPCT>0 | d_impFR$RPPCT>0)#
+d_impFR <- subset(d_impFR, d_impFR$anneediag<2012)
+
+
+
+#creation de la variable de Tils en classe de 10
+d_impFR$TILS_pre_2cl <- cut(d_impFR$TILS_pre, c(0,10,90), c("≤10", ">10"))
+#creation de la variable de RP
+d_impFR$RP_cl <- cut(d_impFR$RPPCT, c(0,20,101),include.lowest = TRUE, c("≤20", ">20"))
+
+
+## Taille en classe
+d_impFR$taille_cl <- as.factor(ifelse(d_impFR$taille_tum <= 50, "T2",
+                                      ifelse(d_impFR$taille_tum > 50, "T3", NA)))
+d_imp$FR$taille_cl <- as.factor(d_impFR$taille_cl)
+
+
+d_impFR$base_label <-NA
+d_impFR$base_label[d_impFR$base=="Adj"] <- "AC"
+d_impFR$base_label[d_impFR$base=="CNA"] <- "NAC"
+d_impFR$base_label <- as.factor(d_impFR$base_label)
+
+d_impFR$age_cl <- factor(d_impFR$age_cl, levels = c("<40","≥40" ))
+
+```
+
+
+# Analysis before PS
+
+```{r}
+# !! a la CENSURE
+km_suivi <- survfit (Surv (tps_deces, 1-deces) ~ base, data=d_impFR)
+#survdiff(Surv (tps_deces, 1-deces) ~ base, data=d_impFR) 
+
+#Médiane survie
+km_survie <- survfit (Surv (tps_deces, deces) ~ base, data=d_impFR)
+
+# survie à 3 et 5 ans
+#summary(km_survie, c(36,60))
+
+```
+
+On a median follow up of 58.4 months in the AC group, and 62.6 months in the NAC group (p = 0.08) there were 76 deaths (55 in the AC group and 21 in the NAC group), 131 metastasis (93 in the AC group and 38 in the NAC gorup), and 23 loco regional recurrence (13 in the AC group and 10 in the NAC group).
+
+## Kaplan-Meier - Survival curves
+
+
+
+
+```{r KM OS population totale, fig.width=9,fig.height=12,autodep=FALSE}
+
+source("univarieSP.R")
+fit_os_sp   <- survfit(Surv( d_impFR$tps_deces, d_impFR$deces)	~ base,  data = d_impFR)
+palette_jco  <- c(pal_jco("default")(10))
+
+
+p_os_sp <- ggsurvplot(fit_os_sp,data=d_impFR, 
+                               palette = palette_jco[1:2],
+                              pval = TRUE,
+                              pval.coord = c(15,0.01),
+                              # legend = c(15, 0.10), 
+                              xlim=c(0,100),
+                              legend.title = "CT strategy", 
+                              legend.labs = levels(d_impFR$base_label),
+                               legend = c(0.2, 0.20) ,
+                              risk.table = T , risk.table.fontsize = 6,
+                     risk.table.y.text=TRUE, 
+           font.legend = 15 , size = 1, 
+                              censor=F, font.x = 16, font.y = 16,font.tickslab = 16, risk.table.title ="N at risk",risk.table.y.text.col = T)
+    
+                             p_os_sp$plot <- p_os_sp$plot + theme(plot.title = element_text(hjust = 0.5))+ ylab("Overall survival")+xlab("Time (months)")
+                          
+                              p_os_sp$table <-p_os_sp$table +  theme(plot.title = element_text(size = 15))
+
+                               p_os_sp$table[["theme"]][["axis.line"]][["colour"]]     <- "white"
+                               p_os_sp$table[["theme"]][["axis.ticks"]][["colour"]]    <- "white"
+                               p_os_sp$table[["theme"]][["axis.text.x"]][["colour"]]   <- "white"
+                               p_os_sp$table[["labels"]][["y"]]                        <- " "
+                               p_os_sp$table[["labels"]][["x"]]   
+					
+#p_os_sp
+```
+
+
+
+
+```{r KM DFS population totale, fig.width=9,fig.height=12,autodep=FALSE}
+
+fit_dfs_sp               <- survfit(Surv( d_impFR$tps_ssr, d_impFR$ssr_num)	~ base ,  data = d_impFR)
+palette_jco  <- c(pal_jco("default")(10))
+
+
+p_dfs_sp<- ggsurvplot(fit_dfs_sp,data=d_impFR, 
+                               palette = palette_jco[1:2],
+                              pval = TRUE,
+                              pval.coord = c(15,0.01),
+                              # legend = c(15, 0.10), 
+                              xlim=c(0,100),
+                              legend.title = "CT strategy", 
+                              legend.labs = levels(d_impFR$base_label),
+                               legend = c(0.2, 0.20) ,
+                              risk.table = T , risk.table.fontsize = 6,
+                     risk.table.y.text=TRUE, 
+           font.legend = 15 , size = 1, 
+                              censor=F, font.x = 16, font.y = 16,font.tickslab = 16, risk.table.title ="N at risk",risk.table.y.text.col = T)
+    
+                             p_dfs_sp$plot <- p_dfs_sp$plot + theme(plot.title = element_text(hjust = 0.5))+ ylab("Disease free survival")+xlab("Time (months)")
+                          
+                              p_dfs_sp$table <-p_dfs_sp$table +  theme(plot.title = element_text(size = 15))
+
+                               p_dfs_sp$table[["theme"]][["axis.line"]][["colour"]]     <- "white"
+                               p_dfs_sp$table[["theme"]][["axis.ticks"]][["colour"]]    <- "white"
+                               p_dfs_sp$table[["theme"]][["axis.text.x"]][["colour"]]   <- "white"
+                               p_dfs_sp$table[["labels"]][["y"]]                        <- " "
+                               p_dfs_sp$table[["labels"]][["x"]]   
+					
+#p_dfs_sp
+```
+
+
+
+
+```{r KM DMFS population totale sp, fig.width=9,fig.height=12,autodep=FALSE}
+
+fit_drfs_sp   <- survfit(Surv(d_impFR$tps_drfs, d_impFR$DRFS_evt)	~ base ,  data = d_impFR)
+palette_jco  <- c(pal_jco("default")(10))
+
+
+p_drfs_sp<- ggsurvplot(fit_drfs_sp,data=d_impFR, 
+                               palette = palette_jco[1:2],
+                              pval = TRUE,
+                              # legend = c(0.6, 0.25), 
+                              xlim=c(0,100),
+                              legend.title = "CT strategy", 
+                              legend.labs = levels(d_impFR$base_label) ,
+                              legend = c(0.2, 0.20) ,
+                               pval.coord = c(15,0.01),
+                              pval.size = 4, 
+                              risk.table = T , risk.table.fontsize = 6,
+                     risk.table.y.text=TRUE, 
+           font.legend = 15 , size = 1, 
+                              censor=F, font.x = 16, font.y = 16,font.tickslab = 16, risk.table.title ="N at risk",risk.table.y.text.col = T)
+    
+                             p_drfs_sp$plot <- p_drfs_sp$plot + theme(plot.title = element_text(hjust = 0.5))+ ylab("Distant recurrence free survival")+xlab("Time (months)")
+                          
+                              p_drfs_sp$table <-p_dfs_sp$table +  theme(plot.title = element_text(size = 15))
+
+                               p_drfs_sp$table[["theme"]][["axis.line"]][["colour"]]     <- "white"
+                               p_drfs_sp$table[["theme"]][["axis.ticks"]][["colour"]]    <- "white"
+                               p_drfs_sp$table[["theme"]][["axis.text.x"]][["colour"]]   <- "white"
+                               p_drfs_sp$table[["labels"]][["y"]]                        <- " "
+                               p_drfs_sp$table[["labels"]][["x"]]   
+					
+#p_drfs_sp
+```
+
+```{r FigA3ABC Figure KM regroupée avant SP,fig.width=18,fig.height=6,autodep=FALSE, echo=TRUE}
+library(cowplot)
+
+##attention les labels des figures sont utilisés dans les 2 figures d'interaction : à changer si je vuex m'en servir
+list_g <- list()
+list_g[[1]] <- p_dfs_sp
+list_g[[2]] <- p_drfs_sp
+list_g[[3]] <- p_os_sp
+
+
+figA1 <- arrange_ggsurvplots(list_g, print = TRUE,   ncol = 3, nrow = 1)
+figA1
+#save_plot("KM avant SP dec2020.pdf", figA1, base_height=5, base_width=8)
+```
+
+# PS developpment
+
+Variable included in the PS were : age, tumor size and nodal status
+
+```{r création population SP}
+
+#multi <- glm (base~age+BMI+rcs(taille_tum,5)+menop.f+Node_preop , data=d_impFR, family=binomial)
+#stepAIC(multi,direction = "backward")
+
+multi_def <- glm( base ~ age +  rcs(taille_tum,5) + Node_preop , family = binomial, data = d_impFR)
+
+set.seed(1703)
+PRED <- multi_def$fitted.values
+d_impFR$PRED <- PRED
+
+```
+
+
+```{r variables utiles et figure de SP}
+
+d_impFR$base_mod <-NA
+d_impFR$base_mod[d_impFR$base=="Adj"] <- 0
+d_impFR$base_mod[d_impFR$base=="CNA"] <- 1
+
+d_impFR$w <- d_impFR$base_mod/d_impFR$PRED + (1 - d_impFR$base_mod)/(1 - d_impFR$PRED)
+d_impFR$wt = pmin(d_impFR$w, quantile(d_impFR$w, 0.99))
+
+d_impFR$base_mod <- factor(d_impFR$base, labels  =c( "ACT","NAC"))
+
+
+d_impFR$age_rev <- cut(d_impFR$age, c(0, 40,50,100), include.lowest=TRUE, labels = c("<40","40-50", "≥50"))
+
+
+plot_SP <- ggplot(d_impFR, aes(x = PRED, fill = base_label)) + geom_density(alpha = 0.5) + theme_bw()+theme (legend.title= element_blank())   + scale_fill_jco() + xlab("Propensity score") +ylab("")+scale_color_jco()+ guides(colour=FALSE)
+```
+
+
+
+
+```{r}
+# varquali <- c("ageclasse.f","BMI_cl","menop.f", "taille_cl", "nuicc","Node_preop", "emb_piece", "surgery", "RT", "chirax", "Node_postop", "TILS_pre_cl")
+# 
+# varquanti <- c("age","BMI","taille_tum", "TILS_pre","TILS_post")
+# 
+d_impFR$base_cl <- as.factor(ifelse(d_impFR$base == "Adj", 0, 1))
+# stddiff.numeric(d_impFR, gcol = 53, vcol = c(2,3,6, 11))
+# stddiff.category(d_impFR, gcol = 53, vcol = c(4))
+
+################
+
+
+covs0 <- subset(d_impFR, select = c("age", "taille_tum",  "taille_cl", "Node_preop", "menop.f",   "BMI"))
+
+v <- data.frame(old = c("age", "taille_tum","taille_cl", "Node_preop", "menop.f", 
+                         "BMI" ),
+                new = c("Age", "Tumor Size" , "T2-T3", "Preoperative Nodal status", 
+                        "Menopausal status", "BMI"))
+
+covplot <- love.plot(bal.tab(covs0, treat = d_impFR$base_cl, weights = d_impFR$wt,
+        method = "weighting"), abs = T, threshold = 0.1, stars= "raw", line = F, grid = T,
+         var.names = v, colors = c("#CD534CFF", "#003C67FF"))
+
+
+#img = "/Users/enoralaas/Dropbox/articles/Luminaux neoadj/Luminaux/dider.png",
+
+
+# eno <- love.plot(bal.tab(covs0, treat = d_impFR$base_cl, weights = d_impFR$wt,
+#         method = "weighting"), abs = T, threshold = 0.1, stars= "raw", line = F, grid = T,
+#         var.names = v, colors = c("#E7B800", "#2E9FDF"))+geom_image(aes(image = img))
+
+```
+
+
+```{r figA4AB ,fig.width=8,fig.height=3}
+library(patchwork)
+
+
+(plot_SP+covplot)
+
+```

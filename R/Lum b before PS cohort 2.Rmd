@@ -1,0 +1,345 @@
+---
+title: "Neoadjuvant vs. adivant chemotherapy in luminal B tumor-Analysis before PS cohort 2"
+author: "T Gaillard,E LAAS"
+date: "18/05/2021"
+header-includes:
+- \usepackage{pdflscape}
+- \usepackage{booktabs}
+editor_options:
+  chunk_output_type: console
+output:
+  html_document:
+    fig_caption: yes
+    number_sections: yes
+    theme: cerulean
+    toc: yes
+    toc_float:
+      collapsed: no
+      smooth_scroll: no
+  pdf_document:
+    toc: yes
+  word_document:
+    toc: yes
+---
+
+```{r global_options, echo=FALSE}
+knitr::opts_chunk$set(fig.path='Figures articles lum b aout/', dev = 'pdf',
+ warning=FALSE, message=FALSE,  echo = FALSE, cache=F)
+#, cache=TRUE, autodep = TRUE
+```
+
+```{r}
+
+library(ggforce)
+library(patchwork)
+library(glue)
+library(knitr)
+library(magrittr)
+library(rms)
+library(RColorBrewer)
+library(scales)
+library(boot)
+library(MatchIt) 
+library(optmatch) 
+library (Matching)
+library (survminer)
+library(ggsci)
+library(ggpubr)
+library(cowplot)
+library(stddiff)
+library(cobalt)
+library(lubridate)
+
+
+PROJECT_PATH_FONCTION = "/Users/enoralaas/Dropbox/articles/Luminaux neoadj/Luminaux/Fonctions/"
+PROJECT_PATH_DATAS = "/Users/enoralaas/Dropbox/articles/Luminaux neoadj/Luminaux/data/"
+source(file.path(PROJECT_PATH_FONCTION, "mes_fonctions2.R"))
+source(file.path(PROJECT_PATH_FONCTION, "interaction.R"))
+
+
+library(tidyverse)
+
+```
+
+# Analysis before PS
+
+```{r cohort 1}
+load("d_imp4.RData") 
+
+d_impFR <- subset(d_imp, d_imp$taille_cl == ">20")
+d_impFR$BRCA_status <- NULL
+
+d_impFR <- subset(d_impFR, d_impFR$chirax!="No")
+d_impFR$chirax <- droplevels((d_impFR$chirax))
+d_impFR$Grade_mod <- as.factor(ifelse (d_impFR$Grade == "1" |d_impFR$Grade=="2", "1-2","3"))
+
+#on selectionne seulement les G3
+d_impFR <- subset(d_impFR, d_impFR$Grade_mod == "3")  
+#je supprime des patientes triples neg qui etaient passé à l'as
+d_impFR <- subset(d_impFR, d_impFR$ROPCT>0 | d_impFR$RPPCT>0)#
+d_impFR <- subset(d_impFR, d_impFR$anneediag<2012)
+
+
+
+#creation de la variable de Tils en classe de 10
+d_impFR$TILS_pre_2cl <- cut(d_impFR$TILS_pre, c(0,10,90), c("≤10", ">10"))
+#creation de la variable de RP
+d_impFR$RP_cl <- cut(d_impFR$RPPCT, c(0,20,101),include.lowest = TRUE, c("≤20", ">20"))
+
+
+## Taille en classe
+d_impFR$taille_cl <- as.factor(ifelse(d_impFR$taille_tum <= 50, "T2",
+                                      ifelse(d_impFR$taille_tum > 50, "T3", NA)))
+d_imp$FR$taille_cl <- as.factor(d_impFR$taille_cl)
+
+
+d_impFR$base_label <-NA
+d_impFR$base_label[d_impFR$base=="Adj"] <- "AC"
+d_impFR$base_label[d_impFR$base=="CNA"] <- "NAC"
+d_impFR$base_label <- as.factor(d_impFR$base_label)
+
+d_impFR$age_cl <- factor(d_impFR$age_cl, levels = c("<40","≥40" ))
+
+```
+
+
+
+```{r}
+load("07_oncofertilite_consore_preprocessed_labels.RData")#n = 1357
+oncofert <- database_preprocessed_labels
+# load("/Users/enoralaas/Downloads/03_p53_eortc_preprocessed_labels.RData")#n = 1856
+# basep53 <- database_preprocessed_labels
+# load("/Users/enoralaas/Downloads/04_canto_preprocessed_labels.RData")#9510
+# canto  <- database_preprocessed_labels
+load("ki67_enora.RData")
+ki <- ki67_enora
+
+test <- read_csv2("oncofertilite_tumorec_vs_mastec_09042021.csv")
+
+load("30_julie_subtype_preprocessed_labels.RData")
+oncofert_compl <- database_preprocessed_labels
+
+base <- left_join(oncofert,oncofert_compl, by = "numdos_curie")
+base <- left_join(base,ki , by = "numdos_curie")
+base <- left_join(base,test , by = "numdos_curie")
+base <- subset(base, base$luminal.y == "Luminal")
+
+
+d <- base[c("dat_first_surg", "dat_os", 
+"database", "numdos_curie", "cletri", "base_cletri", "dat_birth", 
+"year_birth", "dat_bc_diagnosis", "year_diag", "period_diag", 
+"center_curie",   "age", "age_cl_10_1", 
+"age_cl_10_2", "age_cl_3_cl", "age_cl_5_cl", "age_young_cl", 
+"age_young_cl_30_bin", "age_young_cl_40_bin", "age_young_cl_45_bin", 
+"age_young_cl_50_bin", "nb_child", "nb_child_3cl", "prev_child", 
+"brca_screen", "brca_mut", "brca_1_2_mut", "weight", "size", 
+"bmi", "bmi_2cl", "bmi_3cl", "bmi_4cl", "bmi_5cl", "smoking", 
+"bilat_bc", "inflammatory_bc", "tclin", "ctuicc_3cl", "ctuicc_2cl", 
+"cnuicc_4cl", "cnuicc_2cl", "muicc", "dat_first_biopsy", 
+"histo_3cl", "histo_2cl", "grade_3cl", "grade_2cl", "ct", "dat_first_ct", 
+"neo_ct", "adj_ct", "ct_setting_5cl.x", "nbggpos", "pnuicc_4cl", 
+"histo_size", "pcr", "nbggpos_postneo", "ypnuicc_4cl", "ypnuicc_3cl", 
+"ypnuicc_2cl", "dat_last_update", "ev_recloc", "ev_recloc_txt", 
+"dat_recloc", "ev_recreg", "ev_recreg_txt", "dat_recreg", "ev_meta", 
+"ev_meta_txt", "dat_meta", "ev_contro", "ev_contro_txt", "dat_contro", 
+"ev_secondk", "ev_secondk_txt", "dat_secondk", "status_vital", 
+"status_vital_txt", "cause_death", "dat_last_news", "dat_last_news_censor", 
+"year_last_news", "status_rfs_diag", "status_rfs_diag_txt", "status_drfs_diag", 
+"status_drfs_diag_txt", "status_dss_diag", "status_dss_diag_txt", 
+"delay_rfs_diag", "delay_drfs_diag", "delay_dss_diag", "delay_os_diag", 
+"status_dfs", "status_dfs_txt", "dat_rfs", "dat_drfs", "dat_dfs", 
+"dat_dss","er_status", "pr_status", "hr_status","conclusion_KI_tum_non_traitee" ,"tumorectomy_or_mastectomy" )]
+
+
+d$ki <- as.numeric(d$conclusion_KI_tum_non_traitee)
+d$surgery<-as.factor(d$tumorectomy_or_mastectomy)
+
+
+#dd <- subset(d, d$ctuicc_3cl != "T0-T1")
+dd <- subset(d, d$tclin > 20)
+dd <- subset(dd, dd$grade_2cl == "Grade III")
+
+dd$ctuicc_3cl <- droplevels(dd$ctuicc_3cl)
+# age médian : 37 ans
+dd$age_young_cl_35_bin <- as.factor(ifelse(dd$age < 35, 0, 1))
+levels(dd$age_young_cl_35_bin) <- c("[0-35)", "35+")
+dd$chimio <- as.factor(ifelse (dd$neo_ct == "Yes", "NAC", "AC"))
+dd$age_cl_10_1 <- droplevels(dd$age_cl_10_1)
+dd$surgery <- factor(dd$surgery, labels = c("mastectomy",  "tumorectomy", NA, NA))
+
+dd$date_anne <- year(dd$dat_first_surg)
+
+#j'enleve les patientes en commun
+dd <-tibble(dd) %>% filter(!(dd$numdos_curie %in% d_impFR$numdos))
+
+```
+
+```{r}
+(km_suivi <- survfit (Surv (delay_os_diag, 1-status_vital) ~ chimio, data=dd))
+survdiff(Surv (delay_os_diag, 1-status_vital) ~ chimio, data=dd) 
+```
+
+
+On a median follow up of 55 months in the AC group, and 60 months in the NAC group, we recorded : 4 local recurrences (all in the NAC group), 4 regional recurrences (all in the NAC group), 27 distant recurrence (19 in the NAC group and 8 in the AC group) and 16 death (12 in the NAC group and 5 in the AC group)
+
+
+# KM sans pondération
+
+```{r Figure KM , fig.height=6, fig.width=18, autodep=FALSE}
+
+fit_os_sp   <- survfit(Surv( delay_os_diag, status_vital)	~ chimio,  data = dd)
+palette_jco  <- c(pal_jco("default")(10))
+
+
+p_os_sp <- ggsurvplot(fit_os_sp,data=dd, 
+                               palette = palette_jco[1:2],
+                              pval = TRUE,
+                              pval.coord = c(15,0.01),
+                              # legend = c(15, 0.10), 
+                              xlim=c(0,100),
+                              legend.title = "CT strategy", 
+                              legend.labs = levels(dd$chimio),
+                              legend = c(0.2, 0.20) ,
+                              risk.table = T , risk.table.fontsize = 6,
+                     risk.table.y.text=TRUE, 
+           font.legend = 15 , size = 1, 
+                              censor=F, font.x = 16, font.y = 16,font.tickslab = 16, risk.table.title ="N at risk",risk.table.y.text.col = T)
+    
+                              p_os_sp$plot <- p_os_sp$plot + theme(plot.title = element_text(hjust = 0.5))+ ylab("Overall survival")
+                              p_os_sp$table <-p_os_sp$table +  theme(plot.title = element_text(size = 10)) 
+                              
+ p_os_sp$plot <- p_os_sp$plot + theme(plot.title = element_text(hjust = 0.5))+ ylab("Overall survival")+xlab("Time (months)")
+                          
+                              p_os_sp$table <-p_os_sp$table +  theme(plot.title = element_text(size = 15))
+
+                               p_os_sp$table[["theme"]][["axis.line"]][["colour"]]     <- "white"
+                               p_os_sp$table[["theme"]][["axis.ticks"]][["colour"]]    <- "white"
+                               p_os_sp$table[["theme"]][["axis.text.x"]][["colour"]]   <- "white"
+                               p_os_sp$table[["labels"]][["y"]]                        <- " "
+                               p_os_sp$table[["labels"]][["x"]]   
+					
+                               
+
+fit_dfs_sp               <- survfit(Surv(delay_rfs_diag, status_rfs_diag)	~ chimio ,  data = dd)
+palette_jco  <- c(pal_jco("default")(10))
+
+
+p_dfs_sp<- ggsurvplot(fit_dfs_sp,data=dd, 
+                               palette = palette_jco[1:2],
+                              pval = TRUE,
+                               pval.coord = c(15,0.01), 
+                              xlim=c(0,100),
+                              legend.title = "CT strategy", 
+                              legend.labs = levels(dd$chimio) ,
+                              legend = c(0.2, 0.20) ,
+                              risk.table = T , risk.table.fontsize = 6,
+                     risk.table.y.text=TRUE, 
+           font.legend = 15 , size = 1, 
+                              censor=F, font.x = 16, font.y = 16,font.tickslab = 16, risk.table.title ="N at risk",risk.table.y.text.col = T)
+     p_dfs_sp$plot <- p_dfs_sp$plot + theme(plot.title = element_text(hjust = 0.5))+ ylab("Disease free survival")+xlab("Time (months)")
+                          
+                              p_dfs_sp$table <-p_dfs_sp$table +  theme(plot.title = element_text(size = 15))
+
+                               p_dfs_sp$table[["theme"]][["axis.line"]][["colour"]]     <- "white"
+                               p_dfs_sp$table[["theme"]][["axis.ticks"]][["colour"]]    <- "white"
+                               p_dfs_sp$table[["theme"]][["axis.text.x"]][["colour"]]   <- "white"
+                               p_dfs_sp$table[["labels"]][["y"]]                        <- " "
+                               p_dfs_sp$table[["labels"]][["x"]]   
+
+                              
+                              
+fit_drfs_sp   <- survfit(Surv(delay_drfs_diag, status_drfs_diag)	~ chimio ,  data = dd)
+palette_jco  <- c(pal_jco("default")(10))
+
+
+p_drfs_sp<- ggsurvplot(fit_drfs_sp,data=dd, 
+                               palette = palette_jco[1:2],
+                              pval = TRUE,
+                       pval.coord = c(15,0.01),
+                              # legend = c(0.6, 0.25), 
+                              xlim=c(0,100),
+                              legend.title = "CT strategy", 
+                              legend.labs = levels(dd$chimio) ,
+                             legend = c(0.2, 0.20) ,
+                              risk.table = T , risk.table.fontsize = 6,
+                     risk.table.y.text=TRUE, 
+           font.legend = 15 , size = 1, 
+                              censor=F, font.x = 16, font.y = 16,font.tickslab = 16, risk.table.title ="N at risk",risk.table.y.text.col = T)
+    
+                              p_drfs_sp$plot <- p_drfs_sp$plot + theme(plot.title = element_text(hjust = 0.5))+ ylab("Distant recurrence free survival")+xlab("Time (months)")
+                          
+                              p_drfs_sp$table <-p_dfs_sp$table +  theme(plot.title = element_text(size = 15))
+
+                               p_drfs_sp$table[["theme"]][["axis.line"]][["colour"]]     <- "white"
+                               p_drfs_sp$table[["theme"]][["axis.ticks"]][["colour"]]    <- "white"
+                               p_drfs_sp$table[["theme"]][["axis.text.x"]][["colour"]]   <- "white"
+                               p_drfs_sp$table[["labels"]][["y"]]                        <- " "
+                               p_drfs_sp$table[["labels"]][["x"]] 
+```    
+
+```{r FigA7ABC Figure KM regroupée, fig.height=6, fig.width=18, autodep=FALSE}
+list_g <- list()
+list_g[[1]] <- p_dfs_sp
+list_g[[3]] <- p_os_sp
+list_g[[2]] <- p_drfs_sp
+
+arrange_ggsurvplots(list_g, print = TRUE,   ncol = 3, nrow = 1)
+
+
+```
+
+# Propensity score
+
+Variables included in the PS were : 
+age, initial clinical tumor size and initial nodal status
+
+```{r  création population SP}
+# on rappelle que toutes les variables quantitatives sont lineaires
+dnona <- subset(dd, !is.na(dd$bmi))
+multi <- glm (chimio~age+ bmi +tclin+cnuicc_2cl , data=dnona, family=binomial)
+library(MASS)
+stepAIC(multi,direction = "backward")
+
+multi_def <- glm( chimio ~ age  + tclin + cnuicc_2cl , family = binomial, data = dd)
+
+set.seed(1703)
+PRED <- multi_def$fitted.values
+dd$PRED <- PRED
+
+
+dd$base_mod <-NA
+dd$base_mod[dd$chimio=="AC"] <- 0
+dd$base_mod[dd$chimio=="NAC"] <- 1
+
+
+
+dd$w <- dd$base_mod/dd$PRED + (1 - dd$base_mod)/(1 - dd$PRED)
+dd$wt = pmin(dd$w, quantile(dd$w, 0.99))
+
+
+
+plot_SP <- ggplot(dd, aes(x = PRED, fill = chimio)) + geom_density(alpha = 0.5) +theme (legend.title= element_blank())  +  guides(colour=FALSE) + scale_fill_jco() + xlab("Propensity score") +ylab("")
+```
+
+
+```{r , fig.width= 14, fig.height=10}
+dd$base <- as.factor(ifelse(dd$base_mod == 0, 0, 1))
+dd <- subset(dd, !is.na(dd$bmi))
+
+covs0 <- subset(dd, select = c("age", "tclin", "ctuicc_3cl", "cnuicc_2cl", "bmi"))
+
+v <- data.frame(variable = c("age", "tclin", "ctuicc_3cl", "cnuicc_2cl", "bmi"),
+                name_variable = c("Age", "Tumor size",  "T2-T3", "Preoperative Nodal status", "BMI"))
+
+lovplot <- love.plot(bal.tab(covs0, treat = dd$base, weights = dd$wt, method = "weighting"), abs = T, threshold = 0.1, stars= "raw", line = F, grid = T, var.names = v,   colors = c("#CD534CFF", "#003C67FF"))
+```
+
+
+```{r FigA8AB,fig.width=8,fig.height=3}
+library(patchwork)
+
+
+(plot_SP+lovplot)
+
+```
+
